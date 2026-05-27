@@ -74,15 +74,25 @@ npm run verify:stack
 - `PATCH /api/watchlist` update tracked wallet label
 - `DELETE /api/watchlist` remove tracked wallet
 
-## Deployment
-
-Deploy on Vercel:
+## Deployment (Netlify)
 
 1. Push repository to GitHub.
-2. Import project in Vercel.
-3. Set environment variables from `.env.example`.
-4. Deploy.
+2. In Netlify, create a new site from Git and select this repository.
+3. Build settings:
+
+- Build command: `npm run build`
+- Publish directory: `.next`
+
+4. Add environment variables in Netlify Site Settings > Environment Variables:
+
+- `SOLANA_RPC_URL`
+- `SUPABASE_URL` (optional)
+- `SUPABASE_ANON_KEY` (optional)
+- `SUPABASE_SERVICE_ROLE_KEY` (optional)
+
+5. Deploy.
 
 Notes:
+- This repo includes `netlify.toml` with the Next.js plugin and Node 20 runtime.
 - Without Supabase vars, watchlist still works locally in browser storage.
 - With Supabase configured, watchlist sync is persisted server-side.

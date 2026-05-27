@@ -5,12 +5,34 @@ import { getTokenPairs } from '@/lib/dexscreener';
 import { isValidSolanaAddress } from '@/lib/utils';
 import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 
-const MAX_TX_COUNT = 40;
+const MAX_TX_COUNT = 20;
+const TX_METRIC_FETCH_COUNT = 12;
+const TX_WINDOW_SCAN_COUNT = 200;
 const MAX_HOLDINGS = 20;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
 const metadataCache = new Map<string, Promise<{ name: string; symbol: string } | null>>();
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function rpcWithRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+      await wait(300 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
 
 function parseMetadataString(data: Buffer, offset: number): { value: string; nextOffset: number } {
   if (offset + 4 > data.length) return { value: '', nextOffset: data.length };
@@ -216,6 +238,7 @@ function computeTxMetrics(
     trades: trades.sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_TX_COUNT),
     estimatedPnlUsd,
     estimatedWinRate,
+    decisions,
   };
 }
 
@@ -223,22 +246,18 @@ async function findFirstAndLastTx(address: string): Promise<{ first: number | nu
   const conn = getSolanaConnection();
   const pubkey = new PublicKey(address);
 
-  const latest = await conn.getSignaturesForAddress(pubkey, { limit: 1 });
-  const last = latest[0]?.blockTime ?? null;
+  // Keep wallet age responsive on public RPC by scanning a bounded signature window.
+  const signatures = await rpcWithRetry(
+    () => conn.getSignaturesForAddress(pubkey, { limit: TX_WINDOW_SCAN_COUNT }),
+    1
+  );
 
-  let before: string | undefined;
-  let first: number | null = null;
-
-  for (let page = 0; page < 4; page += 1) {
-    const signatures = await conn.getSignaturesForAddress(pubkey, { limit: 1000, before });
-    if (signatures.length === 0) break;
-
-    const oldestInBatch = signatures[signatures.length - 1];
-    first = oldestInBatch.blockTime ?? first;
-
-    if (signatures.length < 1000) break;
-    before = oldestInBatch.signature;
+  if (signatures.length === 0) {
+    return { first: null, last: null };
   }
+
+  const last = signatures[0]?.blockTime ?? null;
+  const first = signatures[signatures.length - 1]?.blockTime ?? null;
 
   return { first, last };
 }
@@ -260,7 +279,7 @@ export async function GET(
     const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult, txWindowResult] = await Promise.allSettled([
       getSolBalance(address),
       mapHoldings(address),
-      conn.getSignaturesForAddress(pubkey, { limit: MAX_TX_COUNT }),
+      rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: MAX_TX_COUNT }), 1),
       getSolPriceUsd(),
       findFirstAndLastTx(address),
     ]);
@@ -275,9 +294,13 @@ export async function GET(
     let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
     if (signatures.length) {
       try {
-        parsedTransactions = await conn.getParsedTransactions(
-          signatures.map((s) => s.signature),
-          { maxSupportedTransactionVersion: 0 }
+        parsedTransactions = await rpcWithRetry(
+          () =>
+            conn.getParsedTransactions(
+              signatures.slice(0, TX_METRIC_FETCH_COUNT).map((s) => s.signature),
+              { maxSupportedTransactionVersion: 0 }
+            ),
+          1
         );
       } catch (txErr) {
         // Public RPC often rate-limits transaction history requests; keep holdings/profile available.
@@ -287,6 +310,16 @@ export async function GET(
 
     const txMetrics = computeTxMetrics(parsedTransactions, address, solPriceUsd);
     const portfolioValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + solBalance * solPriceUsd;
+
+    const pricedHoldings = holdings.filter((h) => h.priceUsd > 0);
+    const holdingsEstimatedPnlUsd = holdings.reduce((sum, h) => sum + h.estimatedPnl24h, 0);
+    const holdingsWinRate =
+      pricedHoldings.length > 0
+        ? (pricedHoldings.filter((h) => h.estimatedPnl24h > 0).length / pricedHoldings.length) * 100
+        : 0;
+
+    const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
+    const estimatedWinRate = txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : holdingsWinRate;
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);
@@ -306,8 +339,8 @@ export async function GET(
       firstTransactionAt: txWindow.first,
       lastTransactionAt: txWindow.last,
       portfolioValueUsd,
-      estimatedPnlUsd: txMetrics.estimatedPnlUsd,
-      estimatedWinRate: txMetrics.estimatedWinRate,
+      estimatedPnlUsd,
+      estimatedWinRate,
       holdings,
       recentTransactions: txMetrics.trades,
       topWinners,
