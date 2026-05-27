@@ -1,0 +1,204 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-text antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-bright rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-3;
+  }
+
+  ::selection {
+    background: rgba(0, 255, 163, 0.3);
+    color: white;
+  }
+}
+
+@layer components {
+  /* Glassmorphism card */
+  .glass-card {
+    @apply bg-surface/80 backdrop-blur-md border border-border rounded-xl shadow-glass;
+  }
+
+  .glass-card-bright {
+    @apply bg-surface-2/90 backdrop-blur-md border border-border-bright rounded-xl shadow-glass;
+  }
+
+  /* Neon glow effects */
+  .glow-accent {
+    @apply shadow-glow;
+    text-shadow: 0 0 10px rgba(0, 255, 163, 0.7);
+  }
+
+  .glow-cyan {
+    @apply shadow-glow-cyan;
+    text-shadow: 0 0 10px rgba(0, 212, 255, 0.7);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-accent to-cyan bg-clip-text text-transparent;
+  }
+
+  .gradient-text-purple {
+    @apply bg-gradient-to-r from-purple to-cyan bg-clip-text text-transparent;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply bg-accent text-background font-semibold px-5 py-2.5 rounded-lg
+           hover:bg-accent-dim transition-all duration-200 shadow-glow-sm
+           hover:shadow-glow active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-2 border border-border text-text font-medium px-5 py-2.5 rounded-lg
+           hover:border-accent/50 hover:text-accent transition-all duration-200
+           active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply text-text-2 px-4 py-2 rounded-lg hover:bg-surface-2
+           hover:text-text transition-all duration-200;
+  }
+
+  /* Input */
+  .input-primary {
+    @apply bg-surface-2 border border-border text-text placeholder-text-3
+           rounded-lg px-4 py-2.5 focus:outline-none focus:border-accent/60
+           focus:ring-1 focus:ring-accent/30 transition-all duration-200;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-green {
+    @apply badge bg-accent/20 text-accent border border-accent/30;
+  }
+
+  .badge-red {
+    @apply badge bg-red/20 text-red border border-red/30;
+  }
+
+  .badge-cyan {
+    @apply badge bg-cyan/20 text-cyan border border-cyan/30;
+  }
+
+  .badge-yellow {
+    @apply badge bg-yellow/20 text-yellow border border-yellow/30;
+  }
+
+  .badge-purple {
+    @apply badge bg-purple/20 text-purple border border-purple/30;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply glass-card p-4 flex flex-col gap-1;
+  }
+
+  /* Table */
+  .data-table {
+    @apply w-full text-sm;
+  }
+
+  .data-table th {
+    @apply text-text-3 font-medium text-left py-3 px-4 border-b border-border;
+  }
+
+  .data-table td {
+    @apply py-3 px-4 border-b border-border/50;
+  }
+
+  .data-table tr:hover td {
+    @apply bg-surface-2/50;
+  }
+
+  /* Ticker animation */
+  .ticker-track {
+    display: flex;
+    width: max-content;
+    animation: ticker 30s linear infinite;
+  }
+
+  /* Neon border */
+  .neon-border {
+    position: relative;
+  }
+
+  .neon-border::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0,255,163,0.5), rgba(0,212,255,0.5));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* Shimmer loading */
+  .shimmer {
+    @apply bg-gradient-to-r from-surface-2 via-surface-3 to-surface-2 bg-[length:200%_100%];
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Positive / Negative color helpers */
+  .text-positive {
+    @apply text-accent;
+  }
+
+  .text-negative {
+    @apply text-red;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
