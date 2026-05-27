@@ -242,6 +242,19 @@ function computeTxMetrics(
   };
 }
 
+function fallbackTradesFromSignatures(
+  signatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
+): Trade[] {
+  return signatures.slice(0, MAX_TX_COUNT).map((sig) => ({
+    signature: sig.signature,
+    timestamp: sig.blockTime ?? 0,
+    solChange: 0,
+    feeSol: 0,
+    valueUsd: 0,
+    status: sig.err ? 'failed' : 'confirmed',
+  }));
+}
+
 async function findFirstAndLastTx(address: string): Promise<{ first: number | null; last: number | null }> {
   const conn = getSolanaConnection();
   const pubkey = new PublicKey(address);
@@ -332,6 +345,9 @@ export async function GET(
       ? (Date.now() - txWindow.first * 1000) / (1000 * 60 * 60 * 24)
       : null;
 
+    const recentTransactions =
+      txMetrics.trades.length > 0 ? txMetrics.trades : fallbackTradesFromSignatures(signatures);
+
     const data: WalletAnalysis = {
       address,
       solBalance,
@@ -342,7 +358,7 @@ export async function GET(
       estimatedPnlUsd,
       estimatedWinRate,
       holdings,
-      recentTransactions: txMetrics.trades,
+      recentTransactions,
       topWinners,
       topLosers,
     };
