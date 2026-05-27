@@ -112,7 +112,7 @@ export default function WatchlistPage() {
               onChange={(e) => { setNewAddress(e.target.value); setError(''); }}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
               placeholder="Paste Solana wallet address..."
-              className="input-primary pl-9 w-full font-mono text-sm"
+              className="input-primary pl-9 w-full font-mono text-base"
             />
           </div>
           <button onClick={handleAdd} className="btn-primary px-6 text-sm disabled:cursor-not-allowed disabled:opacity-70" disabled={isSaving}>
@@ -156,7 +156,7 @@ export default function WatchlistPage() {
                           if (e.key === 'Enter') saveLabel(entry.address);
                           if (e.key === 'Escape') setEditingId(null);
                         }}
-                        className="input-primary text-sm flex-1"
+                        className="input-primary text-base flex-1"
                         autoFocus
                         placeholder="Custom label..."
                       />

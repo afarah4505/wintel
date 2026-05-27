@@ -51,7 +51,7 @@ export default function HomePage() {
                 }}
                 onKeyDown={onKey}
                 placeholder="Paste a Solana wallet address"
-                className="input-primary w-full py-3 pl-10 font-mono text-sm sm:text-base"
+                className="input-primary w-full py-3 pl-10 font-mono text-base"
                 spellCheck={false}
               />
             </div>
