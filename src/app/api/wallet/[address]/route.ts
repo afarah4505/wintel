@@ -5,7 +5,7 @@ import { getTokenPairs } from '@/lib/dexscreener';
 import { isValidSolanaAddress } from '@/lib/utils';
 import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 
-const MAX_TX_COUNT = 20;
+const MAX_TX_COUNT = 10;
 const TX_METRIC_FETCH_COUNT = 12;
 const TX_WINDOW_SCAN_COUNT = 200;
 const MAX_HOLDINGS = 20;
