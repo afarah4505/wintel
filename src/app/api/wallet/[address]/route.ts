@@ -9,7 +9,11 @@ const MAX_TX_COUNT = 10;
 const SIGNATURE_FETCH_COUNT = 25;
 const TX_METRIC_FETCH_COUNT = 20;
 const AGE_SCAN_PAGE_SIZE = 1000; // maximum allowed by Solana RPC
-const AGE_SCAN_MAX_PAGES = 10;  // up to 10,000 signatures scanned for wallet age
+const AGE_SCAN_MAX_PAGES = 60; // up to 60,000 signatures scanned for wallet age
+const AGE_SCAN_TIME_BUDGET_MS = 10000;
+const AGE_BACKGROUND_TIME_BUDGET_MS = 30000;
+const AGE_BACKGROUND_MAX_PAGES = 200;
+const AGE_CACHE_FRESH_MS = 60000;
 const MAX_HOLDINGS = 10;
 const MIN_WIN_RATE_SAMPLE = 3;
 const MIN_HOLDING_PRICE_CHANGE = 0.2;
@@ -17,6 +21,21 @@ const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
 const metadataCache = new Map<string, Promise<{ name: string; symbol: string } | null>>();
+
+type AgeScanSnapshot = {
+  first: number | null;
+  last: number | null;
+  scanComplete: boolean;
+  scannedSignatures: number;
+  beforeCursor?: string;
+};
+
+type AgeScanCacheEntry = AgeScanSnapshot & {
+  running: boolean;
+  updatedAt: number;
+};
+
+const ageScanCache = new Map<string, AgeScanCacheEntry>();
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -303,48 +322,162 @@ async function estimateWalletAge(
   conn: ReturnType<typeof getSolanaConnection>,
   pubkey: PublicKey,
   latestSignatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
-): Promise<{ first: number | null; last: number | null }> {
+): Promise<AgeScanSnapshot> {
   try {
     if (latestSignatures.length === 0) {
-      return { first: null, last: null };
+      return { first: null, last: null, scanComplete: true, scannedSignatures: 0 };
     }
 
     const latest = latestSignatures[0]?.blockTime ?? null;
+    let scannedSignatures = latestSignatures.length;
 
     // If initial batch is partial we already have all history
     if (latestSignatures.length < SIGNATURE_FETCH_COUNT) {
       return {
         first: latestSignatures[latestSignatures.length - 1]?.blockTime ?? null,
         last: latest,
+        scanComplete: true,
+        scannedSignatures,
+        beforeCursor: undefined,
       };
     }
 
     // Paginate backwards from the oldest signature we have, 1000 at a time
     let earliest: number | null = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
     let before: string | undefined = latestSignatures[latestSignatures.length - 1]?.signature;
+    const deadline = Date.now() + AGE_SCAN_TIME_BUDGET_MS;
+    let scanComplete = false;
 
     for (let page = 0; page < AGE_SCAN_MAX_PAGES && before; page += 1) {
+      if (Date.now() >= deadline) {
+        break;
+      }
+
       const olderSigs = await rpcWithRetry(
         () => conn.getSignaturesForAddress(pubkey, { limit: AGE_SCAN_PAGE_SIZE, before }),
         1
       );
 
-      if (olderSigs.length === 0) break;
+      if (olderSigs.length === 0) {
+        scanComplete = true;
+        break;
+      }
+
+      scannedSignatures += olderSigs.length;
 
       const oldestInPage = olderSigs[olderSigs.length - 1];
       earliest = oldestInPage.blockTime ?? earliest;
       before = oldestInPage.signature;
 
       // Partial page means we have reached the beginning of tx history
-      if (olderSigs.length < AGE_SCAN_PAGE_SIZE) break;
+      if (olderSigs.length < AGE_SCAN_PAGE_SIZE) {
+        scanComplete = true;
+        break;
+      }
     }
 
-    return { first: earliest, last: latest };
+    return { first: earliest, last: latest, scanComplete, scannedSignatures, beforeCursor: scanComplete ? undefined : before };
   } catch {
     const fallbackFirst = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
     const fallbackLast = latestSignatures[0]?.blockTime ?? null;
-    return { first: fallbackFirst, last: fallbackLast };
+    return {
+      first: fallbackFirst,
+      last: fallbackLast,
+      scanComplete: false,
+      scannedSignatures: latestSignatures.length,
+      beforeCursor: latestSignatures[latestSignatures.length - 1]?.signature,
+    };
   }
+}
+
+function mergeAgeScanSnapshots(current: AgeScanSnapshot, cached?: AgeScanCacheEntry): AgeScanSnapshot {
+  if (!cached) return current;
+
+  const first =
+    current.first == null
+      ? cached.first
+      : cached.first == null
+        ? current.first
+        : Math.min(current.first, cached.first);
+
+  return {
+    first,
+    last: current.last ?? cached.last,
+    scanComplete: current.scanComplete || cached.scanComplete,
+    scannedSignatures: Math.max(current.scannedSignatures, cached.scannedSignatures),
+    beforeCursor: current.scanComplete
+      ? undefined
+      : (current.beforeCursor ?? cached.beforeCursor),
+  };
+}
+
+function startBackgroundAgeScan(
+  address: string,
+  conn: ReturnType<typeof getSolanaConnection>,
+  pubkey: PublicKey,
+  snapshot: AgeScanSnapshot
+) {
+  const existing = ageScanCache.get(address);
+  if (!snapshot.beforeCursor || snapshot.scanComplete || existing?.running) {
+    return;
+  }
+
+  ageScanCache.set(address, {
+    ...snapshot,
+    running: true,
+    updatedAt: Date.now(),
+  });
+
+  void (async () => {
+    let first = snapshot.first;
+    const last = snapshot.last;
+    let scannedSignatures = snapshot.scannedSignatures;
+    let before = snapshot.beforeCursor;
+    let scanComplete = snapshot.scanComplete;
+    const deadline = Date.now() + AGE_BACKGROUND_TIME_BUDGET_MS;
+
+    try {
+      for (let page = 0; page < AGE_BACKGROUND_MAX_PAGES && before; page += 1) {
+        if (Date.now() >= deadline) break;
+
+        const olderSigs = await rpcWithRetry(
+          () => conn.getSignaturesForAddress(pubkey, { limit: AGE_SCAN_PAGE_SIZE, before }),
+          1
+        );
+
+        if (olderSigs.length === 0) {
+          scanComplete = true;
+          before = undefined;
+          break;
+        }
+
+        scannedSignatures += olderSigs.length;
+        const oldestInPage = olderSigs[olderSigs.length - 1];
+        if (oldestInPage.blockTime != null) {
+          first = first == null ? oldestInPage.blockTime : Math.min(first, oldestInPage.blockTime);
+        }
+        before = oldestInPage.signature;
+
+        if (olderSigs.length < AGE_SCAN_PAGE_SIZE) {
+          scanComplete = true;
+          before = undefined;
+          break;
+        }
+      }
+    } catch {
+      // Keep best-effort snapshot in cache; API requests will continue refinement.
+    } finally {
+      ageScanCache.set(address, {
+        first,
+        last,
+        scanComplete,
+        scannedSignatures,
+        beforeCursor: scanComplete ? undefined : before,
+        running: false,
+        updatedAt: Date.now(),
+      });
+    }
+  })();
 }
 
 export async function GET(
@@ -372,12 +505,37 @@ export async function GET(
     const holdings = holdingsResult.status === 'fulfilled' ? holdingsResult.value : [];
     const solPriceUsd = solPriceResult.status === 'fulfilled' ? solPriceResult.value : 0;
 
+    const cachedAge = ageScanCache.get(address);
     const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
-    const txWindow = await withTimeout(
-      estimateWalletAge(conn, pubkey, signatures),
-      12000,
-      { first: signatures[signatures.length - 1]?.blockTime ?? null, last: signatures[0]?.blockTime ?? null }
+    const canReuseRunningCache = Boolean(
+      cachedAge?.running && Date.now() - cachedAge.updatedAt < AGE_CACHE_FRESH_MS
     );
+    const txWindowInitial = canReuseRunningCache
+      ? {
+          first: cachedAge?.first ?? signatures[signatures.length - 1]?.blockTime ?? null,
+          last: signatures[0]?.blockTime ?? cachedAge?.last ?? null,
+          scanComplete: cachedAge?.scanComplete ?? false,
+          scannedSignatures: cachedAge?.scannedSignatures ?? signatures.length,
+          beforeCursor: cachedAge?.beforeCursor,
+        }
+      : await withTimeout(
+          estimateWalletAge(conn, pubkey, signatures),
+          12000,
+          {
+            first: signatures[signatures.length - 1]?.blockTime ?? null,
+            last: signatures[0]?.blockTime ?? null,
+            scanComplete: false,
+            scannedSignatures: signatures.length,
+            beforeCursor: signatures[signatures.length - 1]?.signature,
+          }
+        );
+    const txWindow = mergeAgeScanSnapshots(txWindowInitial, cachedAge);
+    ageScanCache.set(address, {
+      ...txWindow,
+      running: cachedAge?.running ?? false,
+      updatedAt: Date.now(),
+    });
+    startBackgroundAgeScan(address, conn, pubkey, txWindow);
 
 
     let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
@@ -449,6 +607,9 @@ export async function GET(
       walletAgeDays,
       firstTransactionAt: txWindow.first,
       lastTransactionAt: txWindow.last,
+      ageScanComplete: txWindow.scanComplete,
+      ageScannedSignatures: txWindow.scannedSignatures,
+      ageScanInProgress: !txWindow.scanComplete && Boolean(ageScanCache.get(address)?.running),
       portfolioValueUsd,
       estimatedPnlUsd,
       estimatedWinRate,

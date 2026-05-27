@@ -76,6 +76,7 @@ export function WalletDashboard({ address }: Props) {
   }
 
   const watchlisted = isWatchlisted(address);
+  const ageIsPartial = Boolean(data && !data.ageScanComplete);
   const walletAgeLabel =
     data?.walletAgeDays == null
       ? 'No tx history'
@@ -157,9 +158,15 @@ export function WalletDashboard({ address }: Props) {
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-text-3">Wallet Age</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : walletAgeLabel}</p>
+          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : `${walletAgeLabel}${ageIsPartial ? ' (est.)' : ''}`}</p>
           {!isLoading && data?.firstTransactionAt && (
             <p className="mt-0.5 text-xs text-text-3">Since {formatDate(data.firstTransactionAt)}</p>
+          )}
+          {!isLoading && ageIsPartial && (
+            <p className="mt-0.5 text-xs text-amber-300">Scanned {data?.ageScannedSignatures ?? 0} signatures (history may be deeper).</p>
+          )}
+          {!isLoading && data?.ageScanInProgress && (
+            <p className="mt-0.5 text-xs text-text-3">Background scan in progress...</p>
           )}
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
