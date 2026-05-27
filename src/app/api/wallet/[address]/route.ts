@@ -331,8 +331,14 @@ export async function GET(
         ? (pricedHoldings.filter((h) => h.estimatedPnl24h > 0).length / pricedHoldings.length) * 100
         : 0;
 
+    // Tx-based "wins" can be distorted by simple SOL transfers/deposits.
+    // Prefer holdings-based win rate unless holdings data is too sparse.
+    const useHoldingsWinRate = pricedHoldings.length >= 3;
+
     const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
-    const estimatedWinRate = txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : holdingsWinRate;
+    const estimatedWinRate = useHoldingsWinRate
+      ? holdingsWinRate
+      : (txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : holdingsWinRate);
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);
