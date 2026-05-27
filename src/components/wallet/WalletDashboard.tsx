@@ -77,7 +77,11 @@ export function WalletDashboard({ address }: Props) {
 
   const watchlisted = isWatchlisted(address);
   const walletAgeLabel =
-    data?.walletAgeDays == null ? 'No tx history' : `${Math.floor(data.walletAgeDays)} days`;
+    data?.walletAgeDays == null
+      ? 'No tx history'
+      : data.walletAgeDays < 1
+        ? '<1 day'
+        : `${Math.floor(data.walletAgeDays)} days`;
 
   const toggleWatchlist = async () => {
     if (isWatchlistSaving) return;
@@ -160,7 +164,7 @@ export function WalletDashboard({ address }: Props) {
         <article className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-text-3">Estimated Win Rate</p>
           <p className="mt-1 text-lg font-semibold">
-            {isLoading ? '...' : data?.estimatedWinRate == null ? 'N/A' : formatPercent(data.estimatedWinRate, 1)}
+            {isLoading ? '...' : data?.estimatedWinRate == null ? 'Insufficient data' : `${data.estimatedWinRate.toFixed(1)}%`}
           </p>
         </article>
       </section>

@@ -6,7 +6,8 @@ import { isValidSolanaAddress } from '@/lib/utils';
 import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 
 const MAX_TX_COUNT = 10;
-const TX_METRIC_FETCH_COUNT = 12;
+const SIGNATURE_FETCH_COUNT = 25;
+const TX_METRIC_FETCH_COUNT = 20;
 const TX_WINDOW_SCAN_COUNT = 200;
 const MAX_HOLDINGS = 10;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -216,10 +217,17 @@ function computeTxMetrics(
     const feeSol = Number(tx.meta?.fee ?? 0) / 1e9;
     const solChange = postBalance - preBalance;
     const valueUsd = solChange * solPriceUsd;
+    const hasTokenActivity = [
+      ...(tx.meta?.preTokenBalances ?? []),
+      ...(tx.meta?.postTokenBalances ?? []),
+    ].some((balance) => balance.owner === address);
+    const looksLikeTrade = hasTokenActivity && Math.abs(solChange) > Math.max(feeSol * 2, 0.0001);
 
-    if (solChange > 0) totalWins += 1;
-    if (solChange < 0) totalLosses += 1;
-    estimatedPnlUsd += valueUsd;
+    if (looksLikeTrade) {
+      if (solChange > 0) totalWins += 1;
+      if (solChange < 0) totalLosses += 1;
+      estimatedPnlUsd += valueUsd;
+    }
 
     trades.push({
       signature: tx.transaction.signatures[0],
@@ -309,7 +317,7 @@ export async function GET(
     const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult] = await Promise.allSettled([
       getSolBalance(address),
       mapHoldings(address),
-      rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: MAX_TX_COUNT }), 1),
+      rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: SIGNATURE_FETCH_COUNT }), 1),
       getSolPriceUsd(),
     ]);
 
@@ -348,9 +356,9 @@ export async function GET(
         : 0;
 
     const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
-    const estimatedWinRate = pricedHoldings.length >= 3
+    const estimatedWinRate = pricedHoldings.length > 0
       ? holdingsWinRate
-      : null;
+      : (txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : null);
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);
