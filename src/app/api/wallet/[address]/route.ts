@@ -8,8 +8,11 @@ import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 const MAX_TX_COUNT = 10;
 const SIGNATURE_FETCH_COUNT = 25;
 const TX_METRIC_FETCH_COUNT = 20;
-const TX_WINDOW_SCAN_COUNT = 200;
+const AGE_SCAN_PAGE_SIZE = 1000; // maximum allowed by Solana RPC
+const AGE_SCAN_MAX_PAGES = 10;  // up to 10,000 signatures scanned for wallet age
 const MAX_HOLDINGS = 10;
+const MIN_WIN_RATE_SAMPLE = 3;
+const MIN_HOLDING_PRICE_CHANGE = 0.2;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
@@ -17,6 +20,14 @@ const metadataCache = new Map<string, Promise<{ name: string; symbol: string } |
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  try {
+    return await Promise.race([work, wait(ms).then(() => fallback)]);
+  } catch {
+    return fallback;
+  }
 }
 
 async function rpcWithRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
@@ -217,11 +228,14 @@ function computeTxMetrics(
     const feeSol = Number(tx.meta?.fee ?? 0) / 1e9;
     const solChange = postBalance - preBalance;
     const valueUsd = solChange * solPriceUsd;
-    const hasTokenActivity = [
+    const tokenBalances = [
       ...(tx.meta?.preTokenBalances ?? []),
       ...(tx.meta?.postTokenBalances ?? []),
-    ].some((balance) => balance.owner === address);
-    const looksLikeTrade = hasTokenActivity && Math.abs(solChange) > Math.max(feeSol * 2, 0.0001);
+    ];
+    const hasOwnerTokenActivity = tokenBalances.some((balance) => balance.owner === address);
+    const hasAnyTokenActivity = tokenBalances.length > 0;
+    const meaningfulSolMove = Math.abs(solChange) > Math.max(feeSol * 3, 0.0002);
+    const looksLikeTrade = !tx.meta?.err && meaningfulSolMove && (hasOwnerTokenActivity || hasAnyTokenActivity);
 
     if (looksLikeTrade) {
       if (solChange > 0) totalWins += 1;
@@ -240,7 +254,7 @@ function computeTxMetrics(
   }
 
   const decisions = totalWins + totalLosses;
-  const estimatedWinRate = decisions === 0 ? 0 : (totalWins / decisions) * 100;
+  const estimatedWinRate = decisions >= MIN_WIN_RATE_SAMPLE ? (totalWins / decisions) * 100 : null;
 
   return {
     trades: trades.sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_TX_COUNT),
@@ -263,6 +277,28 @@ function fallbackTradesFromSignatures(
   }));
 }
 
+async function fetchParsedTransactionsFallback(
+  conn: ReturnType<typeof getSolanaConnection>,
+  signatures: string[]
+): Promise<Awaited<ReturnType<typeof conn.getParsedTransactions>>> {
+  const parsed: NonNullable<Awaited<ReturnType<typeof conn.getParsedTransactions>>> = [];
+
+  for (const signature of signatures.slice(0, 4)) {
+    try {
+      const tx = await withTimeout(
+        rpcWithRetry(() => conn.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0 }), 1),
+        1200,
+        null
+      );
+      if (tx) parsed.push(tx);
+    } catch {
+      // Continue; public RPC can fail per-signature under load.
+    }
+  }
+
+  return parsed;
+}
+
 async function estimateWalletAge(
   conn: ReturnType<typeof getSolanaConnection>,
   pubkey: PublicKey,
@@ -274,22 +310,33 @@ async function estimateWalletAge(
     }
 
     const latest = latestSignatures[0]?.blockTime ?? null;
-    let earliest = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
-    let before = latestSignatures[latestSignatures.length - 1]?.signature;
 
-    for (let page = 0; page < 2 && before; page += 1) {
-      const olderSignatures = await rpcWithRetry(
-        () => conn.getSignaturesForAddress(pubkey, { limit: TX_WINDOW_SCAN_COUNT, before }),
+    // If initial batch is partial we already have all history
+    if (latestSignatures.length < SIGNATURE_FETCH_COUNT) {
+      return {
+        first: latestSignatures[latestSignatures.length - 1]?.blockTime ?? null,
+        last: latest,
+      };
+    }
+
+    // Paginate backwards from the oldest signature we have, 1000 at a time
+    let earliest: number | null = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
+    let before: string | undefined = latestSignatures[latestSignatures.length - 1]?.signature;
+
+    for (let page = 0; page < AGE_SCAN_MAX_PAGES && before; page += 1) {
+      const olderSigs = await rpcWithRetry(
+        () => conn.getSignaturesForAddress(pubkey, { limit: AGE_SCAN_PAGE_SIZE, before }),
         1
       );
 
-      if (olderSignatures.length === 0) break;
+      if (olderSigs.length === 0) break;
 
-      const oldestInPage = olderSignatures[olderSignatures.length - 1];
+      const oldestInPage = olderSigs[olderSigs.length - 1];
       earliest = oldestInPage.blockTime ?? earliest;
       before = oldestInPage.signature;
 
-      if (olderSignatures.length < TX_WINDOW_SCAN_COUNT) break;
+      // Partial page means we have reached the beginning of tx history
+      if (olderSigs.length < AGE_SCAN_PAGE_SIZE) break;
     }
 
     return { first: earliest, last: latest };
@@ -315,10 +362,10 @@ export async function GET(
     const pubkey = new PublicKey(address);
 
     const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult] = await Promise.allSettled([
-      getSolBalance(address),
-      mapHoldings(address),
-      rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: SIGNATURE_FETCH_COUNT }), 1),
-      getSolPriceUsd(),
+      withTimeout(getSolBalance(address), 5000, 0),
+      withTimeout(mapHoldings(address), 9000, [] as TokenHolding[]),
+      withTimeout(rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: SIGNATURE_FETCH_COUNT }), 1), 5000, []),
+      withTimeout(getSolPriceUsd(), 3000, 0),
     ]);
 
     const solBalance = solBalanceResult.status === 'fulfilled' ? solBalanceResult.value : 0;
@@ -326,22 +373,43 @@ export async function GET(
     const solPriceUsd = solPriceResult.status === 'fulfilled' ? solPriceResult.value : 0;
 
     const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
-    const txWindow = await estimateWalletAge(conn, pubkey, signatures);
+    const txWindow = await withTimeout(
+      estimateWalletAge(conn, pubkey, signatures),
+      12000,
+      { first: signatures[signatures.length - 1]?.blockTime ?? null, last: signatures[0]?.blockTime ?? null }
+    );
+
 
     let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
     if (signatures.length) {
       try {
-        parsedTransactions = await rpcWithRetry(
-          () =>
-            conn.getParsedTransactions(
-              signatures.slice(0, TX_METRIC_FETCH_COUNT).map((s) => s.signature),
-              { maxSupportedTransactionVersion: 0 }
-            ),
-          1
+        parsedTransactions = await withTimeout(
+          rpcWithRetry(
+            () =>
+              conn.getParsedTransactions(
+                signatures.slice(0, TX_METRIC_FETCH_COUNT).map((s) => s.signature),
+                { maxSupportedTransactionVersion: 0 }
+              ),
+            1
+          ),
+          7000,
+          []
         );
       } catch (txErr) {
         // Public RPC often rate-limits transaction history requests; keep holdings/profile available.
         console.warn('Wallet transaction fetch throttled or failed, continuing without tx metrics:', txErr);
+      }
+
+      const hasParsedTx = parsedTransactions.some((tx) => Boolean(tx));
+      if (!hasParsedTx) {
+        parsedTransactions = await withTimeout(
+          fetchParsedTransactionsFallback(
+            conn,
+            signatures.slice(0, Math.min(TX_METRIC_FETCH_COUNT, 8)).map((s) => s.signature)
+          ),
+          5000,
+          []
+        );
       }
     }
 
@@ -349,16 +417,17 @@ export async function GET(
     const portfolioValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + solBalance * solPriceUsd;
 
     const pricedHoldings = holdings.filter((h) => h.priceUsd > 0);
+    const actionableHoldings = pricedHoldings.filter((h) => Math.abs(h.priceChange24h) >= MIN_HOLDING_PRICE_CHANGE);
     const holdingsEstimatedPnlUsd = holdings.reduce((sum, h) => sum + h.estimatedPnl24h, 0);
     const holdingsWinRate =
-      pricedHoldings.length > 0
-        ? (pricedHoldings.filter((h) => h.estimatedPnl24h > 0).length / pricedHoldings.length) * 100
+      actionableHoldings.length > 0
+        ? (actionableHoldings.filter((h) => h.estimatedPnl24h > 0).length / actionableHoldings.length) * 100
         : 0;
+    const hasReliableHoldingsSample = actionableHoldings.length >= MIN_WIN_RATE_SAMPLE;
 
     const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
-    const estimatedWinRate = pricedHoldings.length > 0
-      ? holdingsWinRate
-      : (txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : null);
+    const estimatedWinRate =
+      txMetrics.estimatedWinRate ?? (hasReliableHoldingsSample ? holdingsWinRate : null);
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);

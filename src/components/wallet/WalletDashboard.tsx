@@ -81,7 +81,9 @@ export function WalletDashboard({ address }: Props) {
       ? 'No tx history'
       : data.walletAgeDays < 1
         ? '<1 day'
-        : `${Math.floor(data.walletAgeDays)} days`;
+        : data.walletAgeDays >= 365
+          ? `${(data.walletAgeDays / 365).toFixed(1)} yrs (${Math.floor(data.walletAgeDays)} days)`
+          : `${Math.floor(data.walletAgeDays)} days`;
 
   const toggleWatchlist = async () => {
     if (isWatchlistSaving) return;
@@ -156,6 +158,9 @@ export function WalletDashboard({ address }: Props) {
         <article className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-text-3">Wallet Age</p>
           <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : walletAgeLabel}</p>
+          {!isLoading && data?.firstTransactionAt && (
+            <p className="mt-0.5 text-xs text-text-3">Since {formatDate(data.firstTransactionAt)}</p>
+          )}
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-text-3">Estimated PnL</p>

@@ -86,6 +86,7 @@ npm run verify:stack
 4. Add environment variables in Netlify Site Settings > Environment Variables:
 
 - `SOLANA_RPC_URL`
+- `SOLSCAN_API_KEY` (optional, improves wallet age fallback)
 - `SUPABASE_URL` (optional)
 - `SUPABASE_ANON_KEY` (optional)
 - `SUPABASE_SERVICE_ROLE_KEY` (optional)
