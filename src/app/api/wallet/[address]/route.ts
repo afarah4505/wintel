@@ -255,24 +255,41 @@ function fallbackTradesFromSignatures(
   }));
 }
 
-async function findFirstAndLastTx(address: string): Promise<{ first: number | null; last: number | null }> {
-  const conn = getSolanaConnection();
-  const pubkey = new PublicKey(address);
+async function estimateWalletAge(
+  conn: ReturnType<typeof getSolanaConnection>,
+  pubkey: PublicKey,
+  latestSignatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
+): Promise<{ first: number | null; last: number | null }> {
+  try {
+    if (latestSignatures.length === 0) {
+      return { first: null, last: null };
+    }
 
-  // Keep wallet age responsive on public RPC by scanning a bounded signature window.
-  const signatures = await rpcWithRetry(
-    () => conn.getSignaturesForAddress(pubkey, { limit: TX_WINDOW_SCAN_COUNT }),
-    1
-  );
+    const latest = latestSignatures[0]?.blockTime ?? null;
+    let earliest = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
+    let before = latestSignatures[latestSignatures.length - 1]?.signature;
 
-  if (signatures.length === 0) {
-    return { first: null, last: null };
+    for (let page = 0; page < 2 && before; page += 1) {
+      const olderSignatures = await rpcWithRetry(
+        () => conn.getSignaturesForAddress(pubkey, { limit: TX_WINDOW_SCAN_COUNT, before }),
+        1
+      );
+
+      if (olderSignatures.length === 0) break;
+
+      const oldestInPage = olderSignatures[olderSignatures.length - 1];
+      earliest = oldestInPage.blockTime ?? earliest;
+      before = oldestInPage.signature;
+
+      if (olderSignatures.length < TX_WINDOW_SCAN_COUNT) break;
+    }
+
+    return { first: earliest, last: latest };
+  } catch {
+    const fallbackFirst = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
+    const fallbackLast = latestSignatures[0]?.blockTime ?? null;
+    return { first: fallbackFirst, last: fallbackLast };
   }
-
-  const last = signatures[0]?.blockTime ?? null;
-  const first = signatures[signatures.length - 1]?.blockTime ?? null;
-
-  return { first, last };
 }
 
 export async function GET(
@@ -289,20 +306,19 @@ export async function GET(
     const conn = getSolanaConnection();
     const pubkey = new PublicKey(address);
 
-    const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult, txWindowResult] = await Promise.allSettled([
+    const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult] = await Promise.allSettled([
       getSolBalance(address),
       mapHoldings(address),
       rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: MAX_TX_COUNT }), 1),
       getSolPriceUsd(),
-      findFirstAndLastTx(address),
     ]);
 
     const solBalance = solBalanceResult.status === 'fulfilled' ? solBalanceResult.value : 0;
     const holdings = holdingsResult.status === 'fulfilled' ? holdingsResult.value : [];
     const solPriceUsd = solPriceResult.status === 'fulfilled' ? solPriceResult.value : 0;
-    const txWindow = txWindowResult.status === 'fulfilled' ? txWindowResult.value : { first: null, last: null };
 
     const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
+    const txWindow = await estimateWalletAge(conn, pubkey, signatures);
 
     let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
     if (signatures.length) {
@@ -331,14 +347,10 @@ export async function GET(
         ? (pricedHoldings.filter((h) => h.estimatedPnl24h > 0).length / pricedHoldings.length) * 100
         : 0;
 
-    // Tx-based "wins" can be distorted by simple SOL transfers/deposits.
-    // Prefer holdings-based win rate unless holdings data is too sparse.
-    const useHoldingsWinRate = pricedHoldings.length >= 3;
-
     const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
-    const estimatedWinRate = useHoldingsWinRate
+    const estimatedWinRate = pricedHoldings.length >= 3
       ? holdingsWinRate
-      : (txMetrics.decisions > 0 ? txMetrics.estimatedWinRate : holdingsWinRate);
+      : null;
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);

@@ -159,7 +159,9 @@ export function WalletDashboard({ address }: Props) {
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
           <p className="text-xs text-text-3">Estimated Win Rate</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : formatPercent(data?.estimatedWinRate || 0, 1)}</p>
+          <p className="mt-1 text-lg font-semibold">
+            {isLoading ? '...' : data?.estimatedWinRate == null ? 'N/A' : formatPercent(data.estimatedWinRate, 1)}
+          </p>
         </article>
       </section>
 

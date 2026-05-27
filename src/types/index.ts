@@ -28,7 +28,7 @@ export interface WalletAnalysis {
   lastTransactionAt: number | null;
   portfolioValueUsd: number;
   estimatedPnlUsd: number;
-  estimatedWinRate: number;
+  estimatedWinRate: number | null;
   holdings: TokenHolding[];
   recentTransactions: Trade[];
   topWinners: TokenHolding[];
