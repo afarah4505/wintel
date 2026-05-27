@@ -8,7 +8,7 @@ import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 const MAX_TX_COUNT = 10;
 const TX_METRIC_FETCH_COUNT = 12;
 const TX_WINDOW_SCAN_COUNT = 200;
-const MAX_HOLDINGS = 20;
+const MAX_HOLDINGS = 10;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
