@@ -16,7 +16,7 @@ A minimal Solana wallet analyzer focused on one job: analyze any wallet and opti
 ## Stack
 
 - Next.js + React + TypeScript
-- Solana Web3.js with public Solana RPC
+- Solana Web3.js with Helius RPC (free tier recommended) or public Solana RPC
 - DexScreener free API
 - Supabase free tier (optional for watchlist sync)
 
@@ -34,7 +34,13 @@ npm install
 cp .env.example .env.local
 ```
 
-3. (Optional) Set up Supabase watchlist table using [database/SETUP.md](database/SETUP.md).
+3. (Recommended) Get a **free Helius RPC** for full wallet history:
+	- Sign up at https://dev.helius.xyz
+	- Copy your RPC URL (e.g. `https://mainnet.helius-rpc.com/?api-key=YOUR_KEY`)
+	- Set `SOLANA_RPC_URL` in `.env.local` to that URL
+	- Without this, wallet age is limited to the last ~2 months of on-chain data
+
+4. (Optional) Set up Supabase watchlist table using [database/SETUP.md](database/SETUP.md).
 
 4. Start development server:
 
@@ -85,7 +91,7 @@ npm run verify:stack
 
 4. Add environment variables in Netlify Site Settings > Environment Variables:
 
-- `SOLANA_RPC_URL`
+- `SOLANA_RPC_URL` (use Helius RPC URL for full wallet history)
 - `SOLSCAN_API_KEY` (optional, improves wallet age fallback)
 - `SUPABASE_URL` (optional)
 - `SUPABASE_ANON_KEY` (optional)
