@@ -20,23 +20,45 @@ export interface Trade {
   status: 'confirmed' | 'failed';
 }
 
+export type ActivityLevel = 'Low' | 'Medium' | 'High' | 'Very High';
+export type TradingStyle = 'Long-term holder' | 'Swing trader' | 'Meme coin scalper' | 'High-frequency trader';
+export type RiskLevel = 'Low' | 'Medium' | 'High';
+
+export interface WalletActivityFeedItem {
+  type: 'buy' | 'sell' | 'large' | 'new-token';
+  signature: string;
+  timestamp: number;
+  mint: string;
+  tokenSymbol: string;
+  tokenName: string;
+  notionalUsd: number;
+  actionLabel: string;
+  actionDetail?: string;
+}
+
 export interface WalletAnalysis {
   address: string;
   solBalance: number;
-  walletAgeDays: number | null;
+  lastActiveAt: number | null;
   firstTransactionAt: number | null;
   lastTransactionAt: number | null;
-  ageScanInProgress: boolean;
   portfolioValueUsd: number;
-  estimatedPnlUsd: number;
-  estimatedWinRate: number | null;
-  totalTrades: number;
-  winningTrades: number;
-  losingTrades: number;
+  analyzedTransactions: number;
+  analyzedDays: number;
+  analysisNote: string;
+  totalTokenHoldings: number;
+  portfolioDiversity: number;
+  portfolioConcentrationScore: number;
+  activityLevel: ActivityLevel;
+  uniqueTokensTraded: number;
+  recentTradingActivity: string;
+  tradingFrequency: number;
+  tradingStyle: TradingStyle;
+  averageEstimatedHoldDurationHours: number | null;
+  riskLevel: RiskLevel;
+  recentActivityFeed: WalletActivityFeedItem[];
   holdings: TokenHolding[];
   recentTransactions: Trade[];
-  topWinners: TokenHolding[];
-  topLosers: TokenHolding[];
 }
 
 // ─── DexScreener Types ────────────────────────────────────────────────────────

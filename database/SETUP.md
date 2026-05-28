@@ -31,11 +31,15 @@ create table if not exists wallet_age_cache (
 	is_scanning boolean not null default false,
 	scanned_pages integer not null default 0,
 	scanned_signatures integer not null default 0,
+	last_scanned_at timestamptz,
 	updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_wallet_age_cache_updated
 	on wallet_age_cache (updated_at desc);
+
+alter table wallet_age_cache
+	add column if not exists last_scanned_at timestamptz;
 ```
 
 ## 2) Environment variables

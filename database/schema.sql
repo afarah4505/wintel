@@ -227,6 +227,7 @@ CREATE TABLE wallet_age_cache (
     is_scanning             BOOLEAN NOT NULL DEFAULT FALSE,
     scanned_pages           INTEGER NOT NULL DEFAULT 0,
     scanned_signatures      INTEGER NOT NULL DEFAULT 0,
+    last_scanned_at         TIMESTAMPTZ,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

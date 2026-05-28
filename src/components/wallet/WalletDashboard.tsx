@@ -7,7 +7,7 @@ import { Bookmark, BookmarkCheck, ExternalLink, RefreshCw } from 'lucide-react';
 import copy from 'copy-to-clipboard';
 import { toast } from 'react-hot-toast';
 import { useAppStore } from '@/store/appStore';
-import { formatDate, formatPercent, formatUsd, isValidSolanaAddress, shortenAddress, timeAgo } from '@/lib/utils';
+import { formatDate, formatUsd, isValidSolanaAddress, shortenAddress, timeAgo } from '@/lib/utils';
 import { getClientId, trackRemoteWallet, untrackRemoteWallet } from '@/lib/watchlist';
 import type { ApiResponse, WalletAnalysis } from '@/types';
 
@@ -53,7 +53,7 @@ export function WalletDashboard({ address }: Props) {
       return payload.data;
     },
     enabled: isValid,
-    refetchInterval: (query) => (query.state.data?.ageScanInProgress ? 3000 : false),
+    refetchInterval: false,
   });
 
   if (!isValid) {
@@ -77,14 +77,6 @@ export function WalletDashboard({ address }: Props) {
   }
 
   const watchlisted = isWatchlisted(address);
-  const walletAgeLabel =
-    data?.walletAgeDays == null
-      ? 'No detected activity'
-      : data.walletAgeDays < 1
-        ? '<1 day'
-        : data.walletAgeDays >= 365
-          ? `${(data.walletAgeDays / 365).toFixed(1)} yrs (${Math.floor(data.walletAgeDays)} days)`
-          : `${Math.floor(data.walletAgeDays)} days`;
 
   const toggleWatchlist = async () => {
     if (isWatchlistSaving) return;
@@ -114,6 +106,32 @@ export function WalletDashboard({ address }: Props) {
     copy(address);
     toast.success('Address copied');
   };
+
+  const analysisCoverage =
+    data && data.analyzedTransactions > 0
+      ? `Limited analysis from ${data.analyzedTransactions} recent transactions`
+      : data?.lastTransactionAt
+        ? 'Limited analysis'
+        : 'Data unavailable';
+
+  const activityLevelLabel = data?.activityLevel || 'Data unavailable';
+  const activityLevelDetail = data?.recentTradingActivity || 'Not enough recent activity';
+
+  const holdDurationLabel =
+    data?.averageEstimatedHoldDurationHours == null
+      ? 'N/A'
+      : data.averageEstimatedHoldDurationHours >= 24
+        ? `${(data.averageEstimatedHoldDurationHours / 24).toFixed(1)} days`
+        : `${data.averageEstimatedHoldDurationHours.toFixed(1)} hours`;
+
+  const hasDetailedFeed = (data?.recentActivityFeed.length ?? 0) > 0;
+
+  const riskClass =
+    data?.riskLevel === 'High'
+      ? 'text-red'
+      : data?.riskLevel === 'Medium'
+        ? 'text-amber-300'
+        : 'text-accent';
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -153,56 +171,69 @@ export function WalletDashboard({ address }: Props) {
           <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : `${(data?.solBalance || 0).toFixed(4)} SOL`}</p>
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Portfolio Value</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : formatUsd(data?.portfolioValueUsd || 0)}</p>
+          <p className="text-xs text-text-3">Token Holdings</p>
+          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : data?.totalTokenHoldings ?? 0}</p>
+          {!isLoading && <p className="mt-0.5 text-xs text-text-3">Portfolio value: {formatUsd(data?.portfolioValueUsd || 0)}</p>}
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Estimated Wallet Age</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : walletAgeLabel}</p>
-          {!isLoading && data?.firstTransactionAt && (
-            <p className="mt-0.5 text-xs text-text-3">Approximate First Activity: {formatDate(data.firstTransactionAt)}</p>
-          )}
-          {!isLoading && data?.ageScanInProgress && (
-            <p className="mt-0.5 text-xs text-amber-300">Scanning wallet history...</p>
-          )}
-        </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Estimated PnL</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : formatUsd(data?.estimatedPnlUsd || 0)}</p>
-        </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Estimated Win Rate</p>
+          <p className="text-xs text-text-3">Portfolio Diversity</p>
           <p className="mt-1 text-lg font-semibold">
-            {isLoading ? '...' : data?.estimatedWinRate == null ? 'Insufficient data' : `${data.estimatedWinRate.toFixed(1)}%`}
+            {isLoading
+              ? '...'
+              : `${(data?.portfolioDiversity ?? 0).toFixed(1)} / 100`}
           </p>
-          {!isLoading && (
-            <p className="mt-0.5 text-xs text-text-3">
-              Closed trades: {data?.totalTrades ?? 0} | Wins: {data?.winningTrades ?? 0} | Losses: {data?.losingTrades ?? 0}
-            </p>
-          )}
+          <p className="mt-2 text-xs text-text-3">Concentration</p>
+          <p className="mt-0.5 text-sm font-semibold text-text">
+            {isLoading
+              ? '...'
+              : `${(data?.portfolioConcentrationScore ?? 0).toFixed(1)} / 100`}
+          </p>
+        </article>
+        <article className="rounded-xl border border-border bg-surface p-4">
+          <p className="text-xs text-text-3">Last Active</p>
+          <p className="mt-1 text-sm font-semibold text-text">
+            {isLoading
+              ? '...'
+              : data?.lastActiveAt
+                ? `${formatDate(data.lastActiveAt)} (${timeAgo(data.lastActiveAt)})`
+                : 'No recent activity'}
+          </p>
+          {!isLoading && <p className="mt-1 text-xs text-text-3">{analysisCoverage}</p>}
+        </article>
+        <article className="rounded-xl border border-border bg-surface p-4">
+          <p className="text-xs text-text-3">Activity Level</p>
+          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : activityLevelLabel}</p>
+          {!isLoading && <p className="mt-0.5 text-xs text-text-3">{activityLevelDetail}</p>}
         </article>
       </section>
 
-      <section className="mt-4 rounded-2xl border border-border bg-surface p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Timeline</h2>
-        <div className="mt-3 grid gap-2 text-sm text-text-2 sm:grid-cols-2">
-          <p>
-            First transaction:{' '}
-            {isLoading
-              ? '...'
-              : data?.firstTransactionAt
-                ? `${formatDate(data.firstTransactionAt)} (${timeAgo(data.firstTransactionAt)})`
-                : 'Not available'}
-          </p>
-          <p>
-            Last transaction:{' '}
-            {isLoading
-              ? '...'
-              : data?.lastTransactionAt
-                ? `${formatDate(data.lastTransactionAt)} (${timeAgo(data.lastTransactionAt)})`
-                : 'Not available'}
-          </p>
-        </div>
+      <section className="mt-4 grid gap-4 md:grid-cols-2">
+        <article className="rounded-2xl border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Wallet Activity Analytics</h2>
+          <div className="mt-3 grid gap-2 text-sm text-text-2">
+            <p>Transactions analyzed: {isLoading ? '...' : data?.analyzedTransactions ?? 0}</p>
+            <p>Unique tokens traded: {isLoading ? '...' : data?.uniqueTokensTraded ?? 0}</p>
+            <p>Trading frequency: {isLoading ? '...' : `${(data?.tradingFrequency ?? 0).toFixed(2)} tx/day`}</p>
+            <p>
+              Last transaction:{' '}
+              {isLoading
+                ? '...'
+                : data?.lastTransactionAt
+                  ? `${formatDate(data.lastTransactionAt)} (${timeAgo(data.lastTransactionAt)})`
+                  : 'Not available'}
+            </p>
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Behavioral Intelligence</h2>
+          <div className="mt-3 grid gap-2 text-sm text-text-2">
+            <p>Trading style: <span className="font-semibold text-text">{isLoading ? '...' : data?.tradingStyle || 'Long-term holder'}</span></p>
+            <p>Average estimated hold duration: {isLoading ? '...' : holdDurationLabel === 'N/A' ? 'Limited analysis' : holdDurationLabel}</p>
+            <p>Risk level: <span className={`font-semibold ${riskClass}`}>{isLoading ? '...' : data?.riskLevel || 'Low'}</span></p>
+            <p>Portfolio concentration score: {isLoading ? '...' : `${(data?.portfolioConcentrationScore ?? 0).toFixed(1)} / 100`}</p>
+          </div>
+        </article>
       </section>
 
       <section className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -229,61 +260,37 @@ export function WalletDashboard({ address }: Props) {
         </article>
 
         <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Recent Transactions</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Recent Wallet Activity</h2>
           <div className="mt-4 space-y-2">
-            {isLoading && <p className="text-sm text-text-3">Loading transactions...</p>}
-            {!isLoading && (data?.recentTransactions.length || 0) === 0 && (
-              <p className="text-sm text-text-3">No recent transactions found.</p>
+            {isLoading && <p className="text-sm text-text-3">Loading recent activity...</p>}
+            {!isLoading && !hasDetailedFeed && (
+              <p className="text-sm text-text-3">Not enough recent activity.</p>
             )}
-            {!isLoading && data?.recentTransactions.map((tx) => (
+            {!isLoading && hasDetailedFeed && data?.recentActivityFeed.map((event) => (
               <a
-                key={tx.signature}
-                href={solscanTxUrl(tx.signature)}
+                key={`${event.signature}-${event.type}-${event.mint}`}
+                href={solscanTxUrl(event.signature)}
                 target="_blank"
                 rel="noreferrer"
                 className="block rounded-lg border border-border px-3 py-2 hover:border-accent/30"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="font-mono text-xs text-text-2">{shortenAddress(tx.signature, 6)}</p>
-                  <p className={tx.solChange >= 0 ? 'text-xs text-accent' : 'text-xs text-red'}>
-                    {tx.solChange >= 0 ? '+' : ''}{tx.solChange.toFixed(4)} SOL
+                  <p className="text-sm font-medium text-text">
+                    {event.actionLabel}
+                    {' — '}
+                    {event.notionalUsd > 0 ? formatUsd(event.notionalUsd) : 'Data unavailable'}
                   </p>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-accent/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-accent">
+                      {event.tokenSymbol || shortenAddress(event.mint, 4)}
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-1 flex items-center justify-between text-xs text-text-3">
-                  <span>{timeAgo(tx.timestamp)}</span>
-                  <span>{tx.status}</span>
-                </div>
+                {event.actionDetail && (
+                  <div className="mt-1 text-xs text-accent">{event.actionDetail}</div>
+                )}
+                <div className="mt-1 text-xs text-text-3">{timeAgo(event.timestamp)}</div>
               </a>
-            ))}
-          </div>
-        </article>
-      </section>
-
-      <section className="mt-4 grid gap-4 md:grid-cols-2">
-        <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Top Winners</h2>
-          <div className="mt-3 space-y-2">
-            {isLoading && <p className="text-sm text-text-3">Loading...</p>}
-            {!isLoading && (data?.topWinners.length || 0) === 0 && <p className="text-sm text-text-3">No winners yet.</p>}
-            {!isLoading && data?.topWinners.map((token) => (
-              <div key={token.mint} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-                <p className="text-sm text-text">{tokenLabel(token.name, token.symbol, token.mint)}</p>
-                <p className="text-sm text-accent">{formatUsd(token.estimatedPnl24h)}</p>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Top Losers</h2>
-          <div className="mt-3 space-y-2">
-            {isLoading && <p className="text-sm text-text-3">Loading...</p>}
-            {!isLoading && (data?.topLosers.length || 0) === 0 && <p className="text-sm text-text-3">No losers yet.</p>}
-            {!isLoading && data?.topLosers.map((token) => (
-              <div key={token.mint} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-                <p className="text-sm text-text">{tokenLabel(token.name, token.symbol, token.mint)}</p>
-                <p className="text-sm text-red">{formatUsd(token.estimatedPnl24h)}</p>
-              </div>
             ))}
           </div>
         </article>
