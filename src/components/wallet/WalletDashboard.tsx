@@ -175,6 +175,11 @@ export function WalletDashboard({ address }: Props) {
           <p className="mt-1 text-lg font-semibold">
             {isLoading ? '...' : data?.estimatedWinRate == null ? 'Insufficient data' : `${data.estimatedWinRate.toFixed(1)}%`}
           </p>
+          {!isLoading && (
+            <p className="mt-0.5 text-xs text-text-3">
+              Closed trades: {data?.totalTrades ?? 0} | Wins: {data?.winningTrades ?? 0} | Losses: {data?.losingTrades ?? 0}
+            </p>
+          )}
         </article>
       </section>
 

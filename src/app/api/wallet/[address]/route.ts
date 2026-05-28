@@ -11,16 +11,34 @@ const SIGNATURE_FETCH_COUNT = 1000;
 const TX_METRIC_FETCH_COUNT = 20;
 const AGE_SCAN_MAX_PAGES = 100;
 const AGE_SCAN_PAGES_PER_RUN = 4;
+const ANALYTICS_MAX_TRANSACTIONS = 35;
+const ANALYTICS_TX_TIMEOUT_MS = 1200;
+const ANALYTICS_CACHE_TTL_MS = 120000;
+const MIN_CLOSED_TRADE_NOTIONAL_USD = 3;
 const MAX_HOLDINGS = 10;
 const MIN_WIN_RATE_SAMPLE = 3;
 const MIN_HOLDING_PRICE_CHANGE = 0.2;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 const WALLET_AGE_CACHE_TABLE = 'wallet_age_cache';
 
 const metadataCache = new Map<string, Promise<{ name: string; symbol: string } | null>>();
 const activeAgeScans = new Set<string>();
 let walletAgeCacheTableReady: boolean | null = null;
+
+type WalletAnalyticsSnapshot = {
+  latestSignature: string | null;
+  estimatedPnlUsd: number;
+  estimatedWinRate: number | null;
+  totalClosedTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  recentTrades: Trade[];
+  cachedAt: number;
+};
+
+const walletAnalyticsCache = new Map<string, WalletAnalyticsSnapshot>();
 
 type WalletAgeCache = {
   walletAddress: string;
@@ -403,62 +421,211 @@ async function mapHoldings(address: string): Promise<TokenHolding[]> {
   return holdings.sort((a, b) => b.valueUsd - a.valueUsd);
 }
 
-function computeTxMetrics(
-  parsedTxs: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getParsedTransactions']>>,
-  address: string,
-  solPriceUsd: number
-) {
-  const trades: Trade[] = [];
-  let totalWins = 0;
-  let totalLosses = 0;
-  let estimatedPnlUsd = 0;
+type WalletTxResponse = Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getTransaction']>>;
 
-  for (const tx of parsedTxs) {
-    if (!tx) continue;
+type ClosedTradeAccumulator = {
+  openQty: number;
+  openCostUsd: number;
+};
 
-    const accountKeys = tx.transaction.message.accountKeys.map((k) =>
-      typeof k === 'string' ? k : k.pubkey.toBase58()
-    );
-    const ownerIndex = accountKeys.findIndex((k) => k === address);
-    const preBalance = ownerIndex >= 0 ? Number(tx.meta?.preBalances?.[ownerIndex] ?? 0) / 1e9 : 0;
-    const postBalance = ownerIndex >= 0 ? Number(tx.meta?.postBalances?.[ownerIndex] ?? 0) / 1e9 : 0;
-    const feeSol = Number(tx.meta?.fee ?? 0) / 1e9;
-    const solChange = postBalance - preBalance;
-    const valueUsd = solChange * solPriceUsd;
-    const tokenBalances = [
-      ...(tx.meta?.preTokenBalances ?? []),
-      ...(tx.meta?.postTokenBalances ?? []),
-    ];
-    const hasOwnerTokenActivity = tokenBalances.some((balance) => balance.owner === address);
-    const hasAnyTokenActivity = tokenBalances.length > 0;
-    const meaningfulSolMove = Math.abs(solChange) > Math.max(feeSol * 3, 0.0002);
-    const looksLikeTrade = !tx.meta?.err && meaningfulSolMove && (hasOwnerTokenActivity || hasAnyTokenActivity);
+function getOwnerSolDelta(tx: WalletTxResponse, address: string): { solChange: number; feeSol: number } {
+  if (!tx || !tx.transaction) return { solChange: 0, feeSol: 0 };
 
-    if (looksLikeTrade) {
-      if (solChange > 0) totalWins += 1;
-      if (solChange < 0) totalLosses += 1;
-      estimatedPnlUsd += valueUsd;
+  const message = (tx.transaction as unknown as { message?: unknown })?.message as
+    | { accountKeys?: Array<string | { pubkey: { toBase58: () => string } }>; staticAccountKeys?: Array<{ toBase58: () => string }> }
+    | undefined;
+
+  const keyToBase58 = (k: unknown): string => {
+    if (typeof k === 'string') return k;
+    if (!k || typeof k !== 'object') return '';
+    const obj = k as { pubkey?: unknown; toBase58?: () => string };
+    if (typeof obj.toBase58 === 'function') return obj.toBase58();
+    if (typeof obj.pubkey === 'string') return obj.pubkey;
+    if (obj.pubkey && typeof obj.pubkey === 'object' && typeof (obj.pubkey as { toBase58?: () => string }).toBase58 === 'function') {
+      return (obj.pubkey as { toBase58: () => string }).toBase58();
     }
+    return '';
+  };
 
-    trades.push({
-      signature: tx.transaction.signatures[0],
-      timestamp: tx.blockTime ?? 0,
+  const accountKeys = Array.isArray(message?.accountKeys)
+    ? message.accountKeys.map((k) => keyToBase58(k)).filter(Boolean)
+    : Array.isArray(message?.staticAccountKeys)
+      ? message.staticAccountKeys.map((k) => keyToBase58(k)).filter(Boolean)
+      : [];
+
+  const ownerIndex = accountKeys.findIndex((k) => k === address);
+  const preBalance = ownerIndex >= 0 ? Number(tx.meta?.preBalances?.[ownerIndex] ?? 0) / 1e9 : 0;
+  const postBalance = ownerIndex >= 0 ? Number(tx.meta?.postBalances?.[ownerIndex] ?? 0) / 1e9 : 0;
+  const feeSol = Number(tx.meta?.fee ?? 0) / 1e9;
+  return { solChange: postBalance - preBalance, feeSol };
+}
+
+function getOwnerTokenDeltas(tx: WalletTxResponse, address: string): Map<string, number> {
+  const deltas = new Map<string, number>();
+  if (!tx) return deltas;
+
+  const pre = tx.meta?.preTokenBalances ?? [];
+  const post = tx.meta?.postTokenBalances ?? [];
+
+  const addDelta = (mint: string, value: number) => {
+    if (!mint || !Number.isFinite(value)) return;
+    deltas.set(mint, (deltas.get(mint) ?? 0) + value);
+  };
+
+  for (const bal of post) {
+    if (bal.owner !== address) continue;
+    const mint = bal.mint;
+    const postAmt = Number(bal.uiTokenAmount?.uiAmountString ?? bal.uiTokenAmount?.uiAmount ?? 0);
+    const preBal = pre.find((p) => p.owner === address && p.accountIndex === bal.accountIndex);
+    const preAmt = Number(preBal?.uiTokenAmount?.uiAmountString ?? preBal?.uiTokenAmount?.uiAmount ?? 0);
+    addDelta(mint, postAmt - preAmt);
+  }
+
+  for (const bal of pre) {
+    if (bal.owner !== address) continue;
+    const hasPost = post.some((p) => p.owner === address && p.accountIndex === bal.accountIndex);
+    if (hasPost) continue;
+    const preAmt = Number(bal.uiTokenAmount?.uiAmountString ?? bal.uiTokenAmount?.uiAmount ?? 0);
+    addDelta(bal.mint, -preAmt);
+  }
+
+  return deltas;
+}
+
+async function fetchTransactionsForAnalytics(
+  conn: ReturnType<typeof getSolanaConnection>,
+  signatures: string[]
+): Promise<WalletTxResponse[]> {
+  const out: WalletTxResponse[] = [];
+
+  for (const signature of signatures) {
+    const tx = await withTimeout(
+      rpcWithRetry(() => conn.getTransaction(signature, { maxSupportedTransactionVersion: 0 }), 0),
+      ANALYTICS_TX_TIMEOUT_MS,
+      null as WalletTxResponse
+    );
+    if (tx) out.push(tx);
+  }
+
+  return out;
+}
+
+async function computeWalletAnalytics(
+  conn: ReturnType<typeof getSolanaConnection>,
+  address: string,
+  solPriceUsd: number,
+  baseSignatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
+): Promise<WalletAnalyticsSnapshot> {
+  const seedLatestSignature = baseSignatures[0]?.signature ?? null;
+  const cached = walletAnalyticsCache.get(address);
+  if (
+    cached &&
+    Date.now() - cached.cachedAt < ANALYTICS_CACHE_TTL_MS &&
+    cached.latestSignature === seedLatestSignature
+  ) {
+    return cached;
+  }
+
+  const signatures = baseSignatures.slice(0, ANALYTICS_MAX_TRANSACTIONS);
+  const latestSignature = signatures[0]?.signature ?? seedLatestSignature;
+
+  if (
+    cached &&
+    Date.now() - cached.cachedAt < ANALYTICS_CACHE_TTL_MS &&
+    cached.latestSignature === latestSignature
+  ) {
+    return cached;
+  }
+
+  const txs = await fetchTransactionsForAnalytics(conn, signatures.map((s) => s.signature));
+  const tokenBooks = new Map<string, ClosedTradeAccumulator>();
+  const recentTrades: Trade[] = [];
+  let estimatedPnlUsd = 0;
+  let winningTrades = 0;
+  let losingTrades = 0;
+
+  for (const tx of txs) {
+    if (!tx) continue;
+    const signature = tx.transaction.signatures[0] ?? '';
+    const timestamp = tx.blockTime ?? 0;
+    const { solChange, feeSol } = getOwnerSolDelta(tx, address);
+    const valueUsd = solChange * solPriceUsd;
+    recentTrades.push({
+      signature,
+      timestamp,
       solChange,
       feeSol,
       valueUsd,
       status: tx.meta?.err ? 'failed' : 'confirmed',
     });
+
+    if (tx.meta?.err) continue;
+
+    const deltas = getOwnerTokenDeltas(tx, address);
+    if (deltas.size === 0) continue;
+
+    const stableDelta = (deltas.get(USDC_MINT) ?? 0);
+    const effectiveSolDelta = solChange + feeSol;
+    const stableSpendUsd = stableDelta < 0 ? -stableDelta : 0;
+    const stableReceiveUsd = stableDelta > 0 ? stableDelta : 0;
+    const solSpendUsd = effectiveSolDelta < 0 ? -effectiveSolDelta * solPriceUsd : 0;
+    const solReceiveUsd = effectiveSolDelta > 0 ? effectiveSolDelta * solPriceUsd : 0;
+
+    const buyNotionalUsd = stableSpendUsd > 0 ? stableSpendUsd : solSpendUsd;
+    const sellNotionalUsd = stableReceiveUsd > 0 ? stableReceiveUsd : solReceiveUsd;
+
+    const buyLegs = [...deltas.entries()].filter(([mint, delta]) => mint !== USDC_MINT && mint !== WRAPPED_SOL_MINT && delta > 0);
+    const sellLegs = [...deltas.entries()].filter(([mint, delta]) => mint !== USDC_MINT && mint !== WRAPPED_SOL_MINT && delta < 0);
+
+    const totalBuyQty = buyLegs.reduce((s, [, q]) => s + q, 0);
+    for (const [mint, qty] of buyLegs) {
+      const alloc = totalBuyQty > 0 ? buyNotionalUsd * (qty / totalBuyQty) : 0;
+      const book = tokenBooks.get(mint) ?? { openQty: 0, openCostUsd: 0 };
+      book.openQty += qty;
+      book.openCostUsd += alloc;
+      tokenBooks.set(mint, book);
+    }
+
+    const totalSellQty = sellLegs.reduce((s, [, q]) => s + Math.abs(q), 0);
+    for (const [mint, negQty] of sellLegs) {
+      const qty = Math.abs(negQty);
+      const book = tokenBooks.get(mint);
+      if (!book || book.openQty <= 0 || qty <= 0) continue;
+
+      const qtyClosed = Math.min(book.openQty, qty);
+      const buyValueUsd = book.openCostUsd * (qtyClosed / book.openQty);
+      const sellValueUsd = totalSellQty > 0 ? sellNotionalUsd * (qtyClosed / totalSellQty) : 0;
+
+      book.openQty -= qtyClosed;
+      book.openCostUsd -= buyValueUsd;
+      tokenBooks.set(mint, book);
+
+      if (buyValueUsd < MIN_CLOSED_TRADE_NOTIONAL_USD && sellValueUsd < MIN_CLOSED_TRADE_NOTIONAL_USD) {
+        continue;
+      }
+
+      const pnl = sellValueUsd - buyValueUsd;
+      estimatedPnlUsd += pnl;
+      if (pnl > 0) winningTrades += 1;
+      else losingTrades += 1;
+    }
   }
 
-  const decisions = totalWins + totalLosses;
-  const estimatedWinRate = decisions >= MIN_WIN_RATE_SAMPLE ? (totalWins / decisions) * 100 : null;
-
-  return {
-    trades: trades.sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_TX_COUNT),
+  const totalClosedTrades = winningTrades + losingTrades;
+  const estimatedWinRate = totalClosedTrades > 0 ? (winningTrades / totalClosedTrades) * 100 : null;
+  const snapshot: WalletAnalyticsSnapshot = {
+    latestSignature,
     estimatedPnlUsd,
     estimatedWinRate,
-    decisions,
+    totalClosedTrades,
+    winningTrades,
+    losingTrades,
+    recentTrades: recentTrades.sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_TX_COUNT),
+    cachedAt: Date.now(),
   };
+
+  walletAnalyticsCache.set(address, snapshot);
+  return snapshot;
 }
 
 function fallbackTradesFromSignatures(
@@ -576,40 +743,12 @@ export async function GET(
     }
 
 
-    let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
-    if (signatures.length) {
-      try {
-        parsedTransactions = await withTimeout(
-          rpcWithRetry(
-            () =>
-              conn.getParsedTransactions(
-                signatures.slice(0, TX_METRIC_FETCH_COUNT).map((s) => s.signature),
-                { maxSupportedTransactionVersion: 0 }
-              ),
-            1
-          ),
-          7000,
-          []
-        );
-      } catch (txErr) {
-        // Public RPC often rate-limits transaction history requests; keep holdings/profile available.
-        console.warn('Wallet transaction fetch throttled or failed, continuing without tx metrics:', txErr);
-      }
-
-      const hasParsedTx = parsedTransactions.some((tx) => Boolean(tx));
-      if (!hasParsedTx) {
-        parsedTransactions = await withTimeout(
-          fetchParsedTransactionsFallback(
-            conn,
-            signatures.slice(0, Math.min(TX_METRIC_FETCH_COUNT, 8)).map((s) => s.signature)
-          ),
-          5000,
-          []
-        );
-      }
-    }
-
-    const txMetrics = computeTxMetrics(parsedTransactions, address, solPriceUsd);
+    const analytics = await computeWalletAnalytics(
+      conn,
+      address,
+      solPriceUsd,
+      signatures
+    );
     const portfolioValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + solBalance * solPriceUsd;
 
     const pricedHoldings = holdings.filter((h) => h.priceUsd > 0);
@@ -621,9 +760,8 @@ export async function GET(
         : 0;
     const hasReliableHoldingsSample = actionableHoldings.length >= MIN_WIN_RATE_SAMPLE;
 
-    const estimatedPnlUsd = txMetrics.decisions > 0 ? txMetrics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
-    const estimatedWinRate =
-      txMetrics.estimatedWinRate ?? (hasReliableHoldingsSample ? holdingsWinRate : null);
+    const estimatedPnlUsd = analytics.totalClosedTrades > 0 ? analytics.estimatedPnlUsd : holdingsEstimatedPnlUsd;
+    const estimatedWinRate = analytics.estimatedWinRate ?? (hasReliableHoldingsSample ? holdingsWinRate : null);
 
     const rankedByPnl = [...holdings].sort((a, b) => b.estimatedPnl24h - a.estimatedPnl24h);
     const topWinners = rankedByPnl.filter((h) => h.estimatedPnl24h > 0).slice(0, 5);
@@ -637,7 +775,7 @@ export async function GET(
       : null;
 
     const recentTransactions =
-      txMetrics.trades.length > 0 ? txMetrics.trades : fallbackTradesFromSignatures(signatures);
+      analytics.recentTrades.length > 0 ? analytics.recentTrades : fallbackTradesFromSignatures(signatures);
 
     const data: WalletAnalysis = {
       address,
@@ -649,6 +787,9 @@ export async function GET(
       portfolioValueUsd,
       estimatedPnlUsd,
       estimatedWinRate,
+      totalTrades: analytics.totalClosedTrades,
+      winningTrades: analytics.winningTrades,
+      losingTrades: analytics.losingTrades,
       holdings,
       recentTransactions,
       topWinners,
