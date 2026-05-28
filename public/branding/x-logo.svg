@@ -1,0 +1,36 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="40" y1="40" x2="360" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07131A"/>
+      <stop offset="1" stop-color="#0B1D28"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="70" y1="70" x2="330" y2="330" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00FFA3"/>
+      <stop offset="1" stop-color="#00D4FF"/>
+    </linearGradient>
+    <linearGradient id="core" x1="120" y1="100" x2="280" y2="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00FFA3"/>
+      <stop offset="1" stop-color="#00B8FF"/>
+    </linearGradient>
+    <filter id="glow" x="0" y="0" width="400" height="400" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="368" height="368" rx="96" fill="url(#bg)"/>
+  <rect x="16" y="16" width="368" height="368" rx="96" stroke="url(#ring)" stroke-width="3"/>
+
+  <g filter="url(#glow)">
+    <rect x="104" y="118" width="192" height="170" rx="34" fill="none" stroke="url(#ring)" stroke-width="16"/>
+    <rect x="136" y="92" width="26" height="40" rx="13" fill="url(#core)"/>
+    <rect x="238" y="92" width="26" height="40" rx="13" fill="url(#core)"/>
+    <path d="M136 260L170 224L198 246L238 206L266 230" stroke="url(#core)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <circle cx="304" cy="96" r="12" fill="#00FFA3" opacity="0.9"/>
+  <circle cx="94" cy="298" r="8" fill="#00D4FF" opacity="0.85"/>
+</svg>

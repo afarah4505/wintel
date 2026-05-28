@@ -19,10 +19,6 @@ function solscanAddressUrl(address: string) {
   return `https://solscan.io/account/${address}`;
 }
 
-function solscanTxUrl(signature: string) {
-  return `https://solscan.io/tx/${signature}`;
-}
-
 function tokenLabel(name: string, symbol: string, mint: string): string {
   const trimmedName = name?.trim() || '';
   const trimmedSymbol = symbol?.trim() || '';
@@ -109,13 +105,16 @@ export function WalletDashboard({ address }: Props) {
 
   const analysisCoverage =
     data && data.analyzedTransactions > 0
-      ? `Limited analysis from ${data.analyzedTransactions} recent transactions`
+      ? `Recent activity from ${data.analyzedTransactions} transactions`
       : data?.lastTransactionAt
-        ? 'Limited analysis'
+        ? 'Recent wallet activity available'
         : 'Data unavailable';
 
   const activityLevelLabel = data?.activityLevel || 'Data unavailable';
   const activityLevelDetail = data?.recentTradingActivity || 'Not enough recent activity';
+  const walletInsights = data?.walletInsights ?? [];
+  const behaviorSignals = data?.behaviorSignals ?? [];
+  const activitySummary = data?.activitySummary || 'No activity summary available';
 
   const holdDurationLabel =
     data?.averageEstimatedHoldDurationHours == null
@@ -123,8 +122,6 @@ export function WalletDashboard({ address }: Props) {
       : data.averageEstimatedHoldDurationHours >= 24
         ? `${(data.averageEstimatedHoldDurationHours / 24).toFixed(1)} days`
         : `${data.averageEstimatedHoldDurationHours.toFixed(1)} hours`;
-
-  const hasDetailedFeed = (data?.recentActivityFeed.length ?? 0) > 0;
 
   const riskClass =
     data?.riskLevel === 'High'
@@ -134,7 +131,7 @@ export function WalletDashboard({ address }: Props) {
         : 'text-accent';
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
+    <div className="page-shell px-4 pb-16 pt-6 sm:pt-10">
       <section className="rounded-2xl border border-border bg-surface p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <div className="min-w-0 flex-1">
@@ -165,78 +162,139 @@ export function WalletDashboard({ address }: Props) {
         </div>
       </section>
 
-      <section className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">SOL Balance</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : `${(data?.solBalance || 0).toFixed(4)} SOL`}</p>
+      <section className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-5">
+        <article className="stat-card rounded-[1.5rem]">
+          <p className="metric-title">SOL Balance</p>
+          <p className="metric-value mt-2">{isLoading ? '...' : `${(data?.solBalance || 0).toFixed(4)} SOL`}</p>
+          <p className="metric-detail">Live wallet base balance</p>
         </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Token Holdings</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : data?.totalTokenHoldings ?? 0}</p>
-          {!isLoading && <p className="mt-0.5 text-xs text-text-3">Portfolio value: {formatUsd(data?.portfolioValueUsd || 0)}</p>}
+        <article className="stat-card rounded-[1.5rem]">
+          <p className="metric-title">Token Holdings</p>
+          <p className="metric-value mt-2">{isLoading ? '...' : data?.totalTokenHoldings ?? 0}</p>
+          {!isLoading && <p className="metric-detail">Portfolio value: {formatUsd(data?.portfolioValueUsd || 0)}</p>}
         </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Portfolio Diversity</p>
-          <p className="mt-1 text-lg font-semibold">
+        <article className="stat-card rounded-[1.5rem]">
+          <p className="metric-title">Portfolio Diversity</p>
+          <p className="metric-value mt-2">
             {isLoading
               ? '...'
               : `${(data?.portfolioDiversity ?? 0).toFixed(1)} / 100`}
           </p>
-          <p className="mt-2 text-xs text-text-3">Concentration</p>
-          <p className="mt-0.5 text-sm font-semibold text-text">
-            {isLoading
-              ? '...'
-              : `${(data?.portfolioConcentrationScore ?? 0).toFixed(1)} / 100`}
-          </p>
+          <p className="metric-detail mt-1">Concentration {(data?.portfolioConcentrationScore ?? 0).toFixed(1)} / 100</p>
         </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Last Active</p>
-          <p className="mt-1 text-sm font-semibold text-text">
+        <article className="stat-card rounded-[1.5rem]">
+          <p className="metric-title">Last Active</p>
+          <p className="metric-value mt-2 text-[1.25rem] sm:text-[1.4rem]">
             {isLoading
               ? '...'
               : data?.lastActiveAt
                 ? `${formatDate(data.lastActiveAt)} (${timeAgo(data.lastActiveAt)})`
                 : 'No recent activity'}
           </p>
-          {!isLoading && <p className="mt-1 text-xs text-text-3">{analysisCoverage}</p>}
+          {!isLoading && <p className="metric-detail mt-1">{analysisCoverage}</p>}
         </article>
-        <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Activity Level</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : activityLevelLabel}</p>
-          {!isLoading && <p className="mt-0.5 text-xs text-text-3">{activityLevelDetail}</p>}
-        </article>
-      </section>
-
-      <section className="mt-4 grid gap-4 md:grid-cols-2">
-        <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Wallet Activity Analytics</h2>
-          <div className="mt-3 grid gap-2 text-sm text-text-2">
-            <p>Transactions analyzed: {isLoading ? '...' : data?.analyzedTransactions ?? 0}</p>
-            <p>Unique tokens traded: {isLoading ? '...' : data?.uniqueTokensTraded ?? 0}</p>
-            <p>Trading frequency: {isLoading ? '...' : `${(data?.tradingFrequency ?? 0).toFixed(2)} tx/day`}</p>
-            <p>
-              Last transaction:{' '}
-              {isLoading
-                ? '...'
-                : data?.lastTransactionAt
-                  ? `${formatDate(data.lastTransactionAt)} (${timeAgo(data.lastTransactionAt)})`
-                  : 'Not available'}
-            </p>
-          </div>
-        </article>
-
-        <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Behavioral Intelligence</h2>
-          <div className="mt-3 grid gap-2 text-sm text-text-2">
-            <p>Trading style: <span className="font-semibold text-text">{isLoading ? '...' : data?.tradingStyle || 'Long-term holder'}</span></p>
-            <p>Average estimated hold duration: {isLoading ? '...' : holdDurationLabel === 'N/A' ? 'Limited analysis' : holdDurationLabel}</p>
-            <p>Risk level: <span className={`font-semibold ${riskClass}`}>{isLoading ? '...' : data?.riskLevel || 'Low'}</span></p>
-            <p>Portfolio concentration score: {isLoading ? '...' : `${(data?.portfolioConcentrationScore ?? 0).toFixed(1)} / 100`}</p>
-          </div>
+        <article className="stat-card rounded-[1.5rem]">
+          <p className="metric-title">Activity Level</p>
+          <p className="metric-value mt-2 text-[1.25rem] sm:text-[1.4rem]">{isLoading ? '...' : activityLevelLabel}</p>
+          {!isLoading && <p className="metric-detail mt-1">{activityLevelDetail}</p>}
         </article>
       </section>
 
-      <section className="mt-4 grid gap-4 lg:grid-cols-2">
+      <section className="mt-4 grid gap-4 lg:grid-cols-3">
+        <article className="rounded-2xl border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Wallet Insights</h2>
+          {isLoading ? (
+            <p className="mt-4 text-sm text-text-3">Loading insights...</p>
+          ) : (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {(walletInsights.length > 0 ? walletInsights : [{ label: 'Behavior still forming', detail: 'Not enough signal yet' }]).map((insight) => (
+                  <span
+                    key={insight.label}
+                    className="rounded-full border border-accent/20 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent"
+                  >
+                    {insight.label}
+                  </span>
+                ))}
+              </div>
+              <ul className="mt-4 space-y-2 text-sm text-text-2">
+                {(walletInsights.length > 0 ? walletInsights : [{ label: 'Behavior still forming', detail: 'Not enough signal yet' }]).map((insight) => (
+                  <li key={insight.label} className="rounded-lg border border-border px-3 py-2">
+                    <span className="font-semibold text-text">{insight.label}</span>
+                    <span className="text-text-3">: {insight.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </article>
+
+        <article className="rounded-2xl border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Activity Summary</h2>
+          {isLoading ? (
+            <p className="mt-4 text-sm text-text-3">Loading summary...</p>
+          ) : (
+            <>
+              <p className="mt-4 text-sm text-text-2">{activitySummary}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Activity Level</p>
+                  <p className="mt-1 font-semibold text-text">{activityLevelLabel}</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Trading Style</p>
+                  <p className="mt-1 font-semibold text-text">{data?.tradingStyle || 'Long-term holder'}</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Estimated Hold</p>
+                  <p className="mt-1 font-semibold text-text">{holdDurationLabel === 'N/A' ? 'Unavailable' : holdDurationLabel}</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Risk</p>
+                  <p className={`mt-1 font-semibold ${riskClass}`}>{data?.riskLevel || 'Low'}</p>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-text-3">{activityLevelDetail}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Recent Tx</p>
+                  <p className="mt-1 font-semibold text-text">{data?.analyzedTransactions ?? 0}</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Frequency</p>
+                  <p className="mt-1 font-semibold text-text">{(data?.tradingFrequency ?? 0).toFixed(1)} / day</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Last Active</p>
+                  <p className="mt-1 font-semibold text-text">{data?.lastActiveAt ? timeAgo(data.lastActiveAt) : 'No recent activity'}</p>
+                </div>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">Concentration</p>
+                  <p className="mt-1 font-semibold text-text">{(data?.portfolioConcentrationScore ?? 0).toFixed(0)} / 100</p>
+                </div>
+              </div>
+            </>
+          )}
+        </article>
+
+        <article className="rounded-2xl border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Behavior Signals</h2>
+          {isLoading ? (
+            <p className="mt-4 text-sm text-text-3">Loading signals...</p>
+          ) : (
+            <div className="mt-4 grid gap-2">
+              {(behaviorSignals.length > 0 ? behaviorSignals : [{ label: 'No clear behavior signal', value: 'Waiting for more data' }]).map((signal) => (
+                <div key={signal.label} className="rounded-lg border border-border px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-text-3">{signal.label}</p>
+                  <p className="mt-1 text-sm font-semibold text-text">{signal.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+
+      <section className="mt-4">
         <article className="rounded-2xl border border-border bg-surface p-5">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Current Token Holdings</h2>
           <div className="mt-4 space-y-2">
@@ -255,42 +313,6 @@ export function WalletDashboard({ address }: Props) {
                   </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="rounded-2xl border border-border bg-surface p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3">Recent Wallet Activity</h2>
-          <div className="mt-4 space-y-2">
-            {isLoading && <p className="text-sm text-text-3">Loading recent activity...</p>}
-            {!isLoading && !hasDetailedFeed && (
-              <p className="text-sm text-text-3">Not enough recent activity.</p>
-            )}
-            {!isLoading && hasDetailedFeed && data?.recentActivityFeed.map((event) => (
-              <a
-                key={`${event.signature}-${event.type}-${event.mint}`}
-                href={solscanTxUrl(event.signature)}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-lg border border-border px-3 py-2 hover:border-accent/30"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-text">
-                    {event.actionLabel}
-                    {' — '}
-                    {event.notionalUsd > 0 ? formatUsd(event.notionalUsd) : 'Data unavailable'}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded bg-accent/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-accent">
-                      {event.tokenSymbol || shortenAddress(event.mint, 4)}
-                    </span>
-                  </div>
-                </div>
-                {event.actionDetail && (
-                  <div className="mt-1 text-xs text-accent">{event.actionDetail}</div>
-                )}
-                <div className="mt-1 text-xs text-text-3">{timeAgo(event.timestamp)}</div>
-              </a>
             ))}
           </div>
         </article>

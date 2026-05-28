@@ -9,7 +9,9 @@ import type {
   TokenHolding,
   Trade,
   TradingStyle,
+  WalletBehaviorSignal,
   WalletActivityFeedItem,
+  WalletInsight,
   WalletAnalysis,
 } from '@/types';
 
@@ -54,6 +56,7 @@ type AnalyticsTxSummary = {
   feeSol: number;
   status: 'confirmed' | 'failed';
   tokenDeltas: Array<[string, number]>;
+  programTags: string[];
 };
 
 type ActivityFeedDraft = {
@@ -75,7 +78,9 @@ type WalletAnalyticsSnapshot = {
   tradingStyle: TradingStyle;
   averageEstimatedHoldDurationHours: number | null;
   riskLevel: RiskLevel;
-  recentActivityFeed: ActivityFeedDraft[];
+  walletInsights: WalletInsight[];
+  activitySummary: string;
+  behaviorSignals: WalletBehaviorSignal[];
   recentTrades: Trade[];
   cachedAt: number;
 };
@@ -394,11 +399,155 @@ function shouldExpandAnalysisWindow(signatures: SignatureInfo[]): boolean {
   return (oldest.blockTime ?? Number.MAX_SAFE_INTEGER) > cutoffTs;
 }
 
+const PROGRAM_LABELS: Array<{ needle: string; label: string }> = [
+  { needle: 'jupiter', label: 'Jupiter' },
+  { needle: 'raydium', label: 'Raydium' },
+  { needle: 'orca', label: 'Orca' },
+  { needle: 'meteora', label: 'Meteora' },
+  { needle: 'phoenix', label: 'Phoenix' },
+  { needle: 'pump', label: 'Pump.fun' },
+  { needle: 'drift', label: 'Drift' },
+  { needle: 'kamino', label: 'Kamino' },
+  { needle: 'lifinity', label: 'Lifinity' },
+];
+
+function extractProgramTags(tx: ParsedWalletTx): string[] {
+  const txAny = tx as unknown as {
+    transaction?: { message?: { instructions?: unknown[] } };
+    meta?: { innerInstructions?: Array<{ instructions?: unknown[] }> };
+  };
+
+  const candidates: unknown[] = [];
+  if (Array.isArray(txAny.transaction?.message?.instructions)) {
+    candidates.push(...txAny.transaction.message.instructions);
+  }
+  if (Array.isArray(txAny.meta?.innerInstructions)) {
+    for (const entry of txAny.meta.innerInstructions) {
+      if (Array.isArray(entry.instructions)) {
+        candidates.push(...entry.instructions);
+      }
+    }
+  }
+
+  const tags = new Set<string>();
+  const inspect = (value: unknown) => {
+    const text = String(value ?? '').toLowerCase();
+    for (const entry of PROGRAM_LABELS) {
+      if (text.includes(entry.needle)) {
+        tags.add(entry.label);
+      }
+    }
+  };
+
+  for (const ix of candidates) {
+    if (!ix || typeof ix !== 'object') continue;
+    const instruction = ix as {
+      program?: unknown;
+      programId?: unknown;
+      parsed?: { type?: unknown; info?: { source?: unknown; destination?: unknown } };
+    };
+
+    inspect(instruction.program);
+    inspect(typeof instruction.programId === 'object' && instruction.programId && 'toBase58' in instruction.programId
+      ? (instruction.programId as { toBase58?: () => string }).toBase58?.()
+      : instruction.programId);
+    inspect(instruction.parsed?.type);
+    inspect(instruction.parsed?.info?.source);
+    inspect(instruction.parsed?.info?.destination);
+  }
+
+  return [...tags];
+}
+
+function describeLastActive(lastActiveAt: number | null): string {
+  if (!lastActiveAt) return 'No recent activity';
+  const ageSeconds = Math.max(Math.floor(Date.now() / 1000) - lastActiveAt, 0);
+
+  if (ageSeconds < 3600) return 'Active within the last hour';
+  if (ageSeconds < 24 * 3600) return 'Active within the last day';
+  if (ageSeconds < 3 * 24 * 3600) return 'Active within the last few days';
+  if (ageSeconds < 7 * 24 * 3600) return 'Active this week';
+  return 'Low recent activity';
+}
+
+function buildWalletInsights(input: {
+  analyzedTransactions: number;
+  recentWindowTransactions: number;
+  activityLevel: ActivityLevel;
+  tradingFrequency: number;
+  portfolioConcentrationScore: number;
+  totalTokenHoldings: number;
+  uniqueTokensTraded: number;
+  lastActiveAt: number | null;
+  averageEstimatedHoldDurationHours: number | null;
+  programTagCounts: Map<string, number>;
+  recentTradingActivity: string;
+}): { walletInsights: WalletInsight[]; activitySummary: string; behaviorSignals: WalletBehaviorSignal[] } {
+  const insights: WalletInsight[] = [];
+  const signals: WalletBehaviorSignal[] = [];
+
+  const topProgram = [...input.programTagCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const activeLabel = describeLastActive(input.lastActiveAt);
+  const dexLabel = topProgram?.[0] ?? '';
+
+  if (input.recentWindowTransactions >= 20 || input.activityLevel === 'High' || input.activityLevel === 'Very High') {
+    insights.push({ label: 'Highly active wallet', detail: `${input.recentWindowTransactions} recent transactions` });
+  } else if (input.recentWindowTransactions >= 6 || input.activityLevel === 'Medium') {
+    insights.push({ label: 'Recently active trader', detail: `${input.tradingFrequency.toFixed(1)} tx/day` });
+  } else {
+    insights.push({ label: 'Low recent activity', detail: 'Very little wallet movement in the recent window' });
+  }
+
+  if (input.portfolioConcentrationScore >= 70) {
+    insights.push({ label: 'Portfolio concentrated in few assets', detail: `${input.portfolioConcentrationScore.toFixed(0)} / 100 concentration` });
+  } else if (input.totalTokenHoldings >= 4 && input.portfolioConcentrationScore <= 35) {
+    insights.push({ label: 'Diversified token holdings', detail: `${input.totalTokenHoldings} tokens across multiple positions` });
+  }
+
+  if (dexLabel === 'Jupiter' && (topProgram?.[1] ?? 0) >= 2) {
+    insights.push({ label: 'Frequently interacts with Jupiter', detail: `${topProgram?.[1] ?? 0} detected interactions` });
+  } else if (dexLabel) {
+    insights.push({ label: 'Mostly interacts with DEX platforms', detail: `Most common program signal: ${dexLabel}` });
+  } else if (input.tradingFrequency >= 4) {
+    insights.push({ label: 'Mostly interacts with DEX platforms', detail: 'Swap-like activity is more common than passive holding' });
+  }
+
+  if (input.tradingFrequency >= 6 && input.averageEstimatedHoldDurationHours != null && input.averageEstimatedHoldDurationHours < 72) {
+    insights.push({ label: 'Likely short-term trader', detail: `${input.averageEstimatedHoldDurationHours.toFixed(1)}h average estimated hold time` });
+  } else if (input.tradingFrequency >= 2.5 && input.uniqueTokensTraded >= 5) {
+    insights.push({ label: 'Active multi-token wallet', detail: `${input.uniqueTokensTraded} unique tokens traded` });
+  }
+
+  if (insights.length === 0) {
+    insights.push({ label: 'Behavior still forming', detail: 'Not enough signal for a strong heuristic' });
+  }
+
+  signals.push({ label: 'Recent Transactions', value: `${input.recentWindowTransactions} in 7d` });
+  signals.push({ label: 'Activity Frequency', value: `${input.tradingFrequency.toFixed(1)} tx/day` });
+  signals.push({ label: 'Concentration', value: `${input.portfolioConcentrationScore.toFixed(0)} / 100` });
+  signals.push({ label: 'Holdings', value: `${input.totalTokenHoldings} tokens` });
+  signals.push({ label: 'Recent Activity', value: activeLabel });
+  signals.push({ label: 'DEX / Program Use', value: dexLabel || 'No clear DEX signal' });
+
+  const activitySummaryParts = [
+    activeLabel,
+    input.recentWindowTransactions > 0 ? `${input.recentWindowTransactions} transactions in the last 7 days` : 'No recent transaction burst',
+    input.recentTradingActivity,
+  ];
+
+  return {
+    walletInsights: insights,
+    activitySummary: activitySummaryParts.filter(Boolean).join('. '),
+    behaviorSignals: signals,
+  };
+}
+
 function summarizeParsedTransaction(tx: ParsedWalletTx, address: string): AnalyticsTxSummary {
   const signature = tx.transaction.signatures[0] ?? '';
   const timestamp = tx.blockTime ?? 0;
   const { solChange, feeSol } = getOwnerSolDelta(tx, address);
   const tokenDeltas = [...getOwnerTokenDeltas(tx, address).entries()];
+  const programTags = extractProgramTags(tx);
 
   return {
     signature,
@@ -407,6 +556,7 @@ function summarizeParsedTransaction(tx: ParsedWalletTx, address: string): Analyt
     feeSol,
     status: tx.meta?.err ? 'failed' : 'confirmed',
     tokenDeltas,
+    programTags,
   };
 }
 
@@ -438,15 +588,17 @@ function computeAnalyticsSnapshot(
   latestSignature: string | null,
   selectedSignatures: SignatureInfo[],
   txSummaries: Map<string, AnalyticsTxSummary>,
-  solPriceUsd: number
+  solPriceUsd: number,
+  portfolioConcentrationScore: number,
+  totalTokenHoldings: number
 ): WalletAnalyticsSnapshot {
   const tokenBooks = new Map<string, ClosedTradeAccumulator>();
   const tradedMints = new Set<string>();
-  const feed: ActivityFeedDraft[] = [];
   const recentlySeenMints = new Set<string>();
   const selectedSummaries = selectedSignatures
     .map((sig) => txSummaries.get(sig.signature))
     .filter((entry): entry is AnalyticsTxSummary => Boolean(entry));
+  const programTagCounts = new Map<string, number>();
 
   const byTimeAsc = [...selectedSummaries].sort((a, b) => a.timestamp - b.timestamp);
   const recentTrades: Trade[] = selectedSummaries
@@ -472,15 +624,14 @@ function computeAnalyticsSnapshot(
     (sig) => (sig.blockTime ?? 0) >= recentCutoff
   ).length;
 
-  const pushFeed = (event: ActivityFeedDraft) => {
-    if (event.notionalUsd <= 0) return;
-    feed.push(event);
-  };
-
   for (const tx of byTimeAsc) {
     if (tx.status === 'failed') continue;
     confirmedTradingTxs += 1;
     if (tx.timestamp >= recentCutoff) recentWindowParsedTxs += 1;
+
+    for (const tag of tx.programTags) {
+      programTagCounts.set(tag, (programTagCounts.get(tag) ?? 0) + 1);
+    }
 
     const deltas = new Map(
       tx.tokenDeltas.filter(([, delta]) => Math.abs(delta) >= MIN_TOKEN_DELTA)
@@ -514,27 +665,6 @@ function computeAnalyticsSnapshot(
 
     for (const [mint] of nonBaseLegs) {
       tradedMints.add(mint);
-      if (!recentlySeenMints.has(mint)) {
-        recentlySeenMints.add(mint);
-        pushFeed({
-          type: 'new-token',
-          signature: tx.signature,
-          timestamp: tx.timestamp,
-          mint,
-          notionalUsd: Math.max(buyNotionalUsd, sellNotionalUsd),
-        });
-      }
-    }
-
-    if (Math.max(buyNotionalUsd, sellNotionalUsd) >= LARGE_TRANSACTION_USD) {
-      const dominantMint = nonBaseLegs[0]?.[0] ?? WRAPPED_SOL_MINT;
-      pushFeed({
-        type: 'large',
-        signature: tx.signature,
-        timestamp: tx.timestamp,
-        mint: dominantMint,
-        notionalUsd: Math.max(buyNotionalUsd, sellNotionalUsd),
-      });
     }
 
     const totalBuyQty = buyLegs.reduce((sum, [, qty]) => sum + qty, 0);
@@ -545,14 +675,6 @@ function computeAnalyticsSnapshot(
       book.openCostUsd += alloc;
       book.openTimestampWeighted += qty * tx.timestamp;
       tokenBooks.set(mint, book);
-
-      pushFeed({
-        type: 'buy',
-        signature: tx.signature,
-        timestamp: tx.timestamp,
-        mint,
-        notionalUsd: alloc,
-      });
     }
 
     const totalSellQty = sellLegs.reduce((sum, [, qty]) => sum + Math.abs(qty), 0);
@@ -579,13 +701,6 @@ function computeAnalyticsSnapshot(
 
       holdDurationSumHours += holdHours;
       holdDurationSamples += 1;
-      pushFeed({
-        type: 'sell',
-        signature: tx.signature,
-        timestamp: tx.timestamp,
-        mint,
-        notionalUsd: sellValueUsd,
-      });
     }
   }
 
@@ -620,9 +735,19 @@ function computeAnalyticsSnapshot(
       ? 'Dormant in the last 7 days'
       : `${recentWindowTxs} analyzed transactions in the last 7 days`;
 
-  const recentActivityFeed = [...feed]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, RECENT_ACTIVITY_FEED_LIMIT);
+  const insights = buildWalletInsights({
+    analyzedTransactions: selectedSummaries.length,
+    recentWindowTransactions: recentWindowTxs,
+    activityLevel,
+    tradingFrequency,
+    portfolioConcentrationScore,
+    totalTokenHoldings,
+    uniqueTokensTraded: tradedMints.size,
+    lastActiveAt: selectedSignatures[0]?.blockTime ?? null,
+    averageEstimatedHoldDurationHours,
+    programTagCounts,
+    recentTradingActivity,
+  });
 
   return {
     latestSignature,
@@ -635,7 +760,9 @@ function computeAnalyticsSnapshot(
     tradingStyle,
     averageEstimatedHoldDurationHours,
     riskLevel,
-    recentActivityFeed,
+    walletInsights: insights.walletInsights,
+    activitySummary: insights.activitySummary,
+    behaviorSignals: insights.behaviorSignals,
     recentTrades,
     cachedAt: Date.now(),
   };
@@ -660,7 +787,9 @@ function createEmptyAnalyticsEntry(latestSignature: string | null): WalletAnalyt
       tradingStyle: 'Long-term holder',
       averageEstimatedHoldDurationHours: null,
       riskLevel: 'Low',
-      recentActivityFeed: [],
+      walletInsights: [],
+      activitySummary: 'No recent activity',
+      behaviorSignals: [],
       recentTrades: [],
       cachedAt: 0,
     },
@@ -732,7 +861,14 @@ async function runBackgroundAnalyticsScan(
     }
 
     const selected = selectAnalysisWindow(entry.signatures);
-    entry.snapshot = computeAnalyticsSnapshot(entry.latestSignature, selected, entry.txSummaries, solPriceUsd);
+    entry.snapshot = computeAnalyticsSnapshot(
+      entry.latestSignature,
+      selected,
+      entry.txSummaries,
+      solPriceUsd,
+      0,
+      0
+    );
     entry.updatedAt = Date.now();
   } catch {
     // Background analytics failures are non-fatal; keep the latest good snapshot.
@@ -750,6 +886,8 @@ async function computeWalletAnalytics(
   pubkey: PublicKey,
   address: string,
   solPriceUsd: number,
+  portfolioConcentrationScore: number,
+  totalTokenHoldings: number,
   baseSignatures: SignatureInfo[]
 ): Promise<WalletAnalyticsSnapshot> {
   const seedLatestSignature = baseSignatures[0]?.signature ?? null;
@@ -779,7 +917,14 @@ async function computeWalletAnalytics(
     }
   }
 
-  entry.snapshot = computeAnalyticsSnapshot(entry.latestSignature, selected, entry.txSummaries, solPriceUsd);
+  entry.snapshot = computeAnalyticsSnapshot(
+    entry.latestSignature,
+    selected,
+    entry.txSummaries,
+    solPriceUsd,
+    portfolioConcentrationScore,
+    totalTokenHoldings
+  );
   entry.updatedAt = now;
 
   const hasMissingInWindow = selected.some((sig) => !entry.txSummaries.has(sig.signature));
@@ -867,11 +1012,7 @@ async function buildRecentBehaviorFeed(
   holdings: TokenHolding[],
   solPriceUsd: number
 ): Promise<WalletActivityFeedItem[]> {
-  const target = signatures
-    .filter((sig) => !sig.err)
-    .slice(0, FEED_SIGNATURE_FETCH_LIMIT)
-    .map((sig) => sig.signature);
-
+  const target = signatures.filter((sig) => !sig.err).slice(0, FEED_SIGNATURE_FETCH_LIMIT).map((sig) => sig.signature);
   if (target.length === 0) return [];
 
   const summaries = await withTimeout(
@@ -892,25 +1033,11 @@ async function buildRecentBehaviorFeed(
     .sort((a, b) => a.timestamp - b.timestamp);
 
   for (const tx of chronological) {
-    const deltas = tx.tokenDeltas.filter(([, delta]) => Math.abs(delta) >= MIN_TOKEN_DELTA);
-    const nonBaseLegs = deltas.filter(([mint]) => mint !== USDC_MINT && mint !== WRAPPED_SOL_MINT);
-
-    const stableDelta = deltas.find(([mint]) => mint === USDC_MINT)?.[1] ?? 0;
     const effectiveSolDelta = tx.solChange + tx.feeSol;
-    const stableSpendUsd = stableDelta < 0 ? -stableDelta : 0;
-    const stableReceiveUsd = stableDelta > 0 ? stableDelta : 0;
-    const solSpendUsd = effectiveSolDelta < 0 ? -effectiveSolDelta * solPriceUsd : 0;
-    const solReceiveUsd = effectiveSolDelta > 0 ? effectiveSolDelta * solPriceUsd : 0;
-    const buyNotionalUsd = stableSpendUsd > 0 ? stableSpendUsd : solSpendUsd;
-    const sellNotionalUsd = stableReceiveUsd > 0 ? stableReceiveUsd : solReceiveUsd;
+    const solNotionalUsd = Math.abs(effectiveSolDelta) * solPriceUsd;
+    let emittedItem = false;
 
-    if (nonBaseLegs.length === 0) {
-      const transferUsd = Math.abs(effectiveSolDelta) * solPriceUsd;
-      const transferSol = Math.abs(effectiveSolDelta);
-      if (transferUsd < LARGE_TRANSACTION_USD && transferSol < 5) {
-        continue;
-      }
-
+    if (Math.abs(effectiveSolDelta) >= 5 || solNotionalUsd >= LARGE_TRANSACTION_USD) {
       feed.push({
         type: 'large',
         signature: tx.signature,
@@ -918,119 +1045,73 @@ async function buildRecentBehaviorFeed(
         mint: WRAPPED_SOL_MINT,
         tokenSymbol: 'SOL',
         tokenName: 'Solana',
-        notionalUsd: transferUsd,
-        actionLabel: `Transferred ${transferSol.toFixed(2)} SOL`,
+        notionalUsd: solNotionalUsd,
+        actionLabel: effectiveSolDelta >= 0 ? `Received ${Math.abs(effectiveSolDelta).toFixed(2)} SOL` : `Sent ${Math.abs(effectiveSolDelta).toFixed(2)} SOL`,
         actionDetail: 'Large SOL transfer',
       });
+      emittedItem = true;
       continue;
     }
 
-    const dominantLeg = [...nonBaseLegs].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
-    if (!dominantLeg) continue;
-
-    const [mint, delta] = dominantLeg;
-    const meta = resolveMintMeta(mint, holdingMeta);
-    const qty = Math.abs(delta);
-    const tokenPrice = holdingPrice.get(mint) ?? 0;
-    const tokenNotionalUsd = qty * tokenPrice;
-
-    if (delta > 0) {
-      const isNewPosition = !seenMints.has(mint);
-      seenMints.add(mint);
-
-      const estimatedNotionalUsd =
-        buyNotionalUsd > 0
-          ? buyNotionalUsd
-          : tokenNotionalUsd > 0
-            ? tokenNotionalUsd
-            : Math.abs(delta) * (solPriceUsd * 0.001);
-      if (!isNewPosition && estimatedNotionalUsd < FEED_DUST_NOTIONAL_USD) {
-        continue;
-      }
-
-      const actionLabel = isNewPosition
-        ? `First-time token purchase: ${meta.symbol}`
-        : estimatedNotionalUsd >= LARGE_TRANSACTION_USD
-          ? `Bought ${meta.symbol}`
-          : `Bought ${meta.symbol}`;
-
-      const actionDetail =
-        effectiveSolDelta < -MIN_TOKEN_DELTA
-          ? `Swapped ${Math.abs(effectiveSolDelta).toFixed(2)} SOL -> ${meta.symbol}`
-          : estimatedNotionalUsd >= LARGE_TRANSACTION_USD
-            ? 'Large buy event'
-            : `Increased holdings in ${meta.symbol}`;
-
+    if (Math.abs(effectiveSolDelta) >= 0.15) {
       feed.push({
-        type: isNewPosition ? 'new-token' : 'buy',
+        type: effectiveSolDelta >= 0 ? 'buy' : 'sell',
         signature: tx.signature,
         timestamp: tx.timestamp,
-        mint,
-        tokenSymbol: meta.symbol,
-        tokenName: meta.name,
-        notionalUsd: estimatedNotionalUsd,
-        actionLabel,
-        actionDetail,
+        mint: WRAPPED_SOL_MINT,
+        tokenSymbol: 'SOL',
+        tokenName: 'Solana',
+        notionalUsd: solNotionalUsd,
+        actionLabel: effectiveSolDelta >= 0 ? `Received ${Math.abs(effectiveSolDelta).toFixed(2)} SOL` : `Sent ${Math.abs(effectiveSolDelta).toFixed(2)} SOL`,
+        actionDetail: effectiveSolDelta >= 0 ? 'SOL balance increased' : 'SOL balance reduced',
       });
-      continue;
+      emittedItem = true;
     }
 
-    if (delta < 0) {
+    for (const [mint, delta] of tx.tokenDeltas.filter(([, value]) => Math.abs(value) >= MIN_TOKEN_DELTA)) {
+      if (mint === WRAPPED_SOL_MINT) continue;
+
+      const meta = resolveMintMeta(mint, holdingMeta);
+      const tokenPrice = holdingPrice.get(mint) ?? 0;
+      const notionalUsd = Math.abs(delta) * tokenPrice;
+
+      if (Math.abs(delta) < MIN_TOKEN_DELTA) {
+        continue;
+      }
+
+      if (delta > 0) {
+        const isNewToken = !seenMints.has(mint);
+        feed.push({
+          type: isNewToken ? 'new-token' : 'buy',
+          signature: tx.signature,
+          timestamp: tx.timestamp,
+          mint,
+          tokenSymbol: meta.symbol,
+          tokenName: meta.name,
+          notionalUsd,
+          actionLabel: isNewToken ? `New token detected in portfolio: ${meta.symbol}` : `Received ${meta.symbol}`,
+          actionDetail: isNewToken ? 'New token detected in portfolio' : `Increased ${meta.symbol} holdings`,
+        });
+      } else {
+        feed.push({
+          type: 'sell',
+          signature: tx.signature,
+          timestamp: tx.timestamp,
+          mint,
+          tokenSymbol: meta.symbol,
+          tokenName: meta.name,
+          notionalUsd,
+          actionLabel: `Sent ${meta.symbol}`,
+          actionDetail: `Reduced ${meta.symbol} position`,
+        });
+      }
+
       seenMints.add(mint);
-
-      const estimatedNotionalUsd =
-        sellNotionalUsd > 0
-          ? sellNotionalUsd
-          : tokenNotionalUsd > 0
-            ? tokenNotionalUsd
-            : Math.abs(delta) * (solPriceUsd * 0.001);
-      if (estimatedNotionalUsd < FEED_DUST_NOTIONAL_USD) {
-        continue;
-      }
-
-      const actionLabel =
-        estimatedNotionalUsd >= LARGE_TRANSACTION_USD
-          ? `Sold ${meta.symbol}`
-          : `Sold ${meta.symbol}`;
-
-      const actionDetail =
-        effectiveSolDelta > MIN_TOKEN_DELTA
-          ? `Swapped ${meta.symbol} -> ${Math.abs(effectiveSolDelta).toFixed(2)} SOL`
-          : estimatedNotionalUsd >= LARGE_TRANSACTION_USD
-            ? 'Large sell event'
-            : `Reduced holdings in ${meta.symbol}`;
-
-      feed.push({
-        type: 'sell',
-        signature: tx.signature,
-        timestamp: tx.timestamp,
-        mint,
-        tokenSymbol: meta.symbol,
-        tokenName: meta.name,
-        notionalUsd: estimatedNotionalUsd,
-        actionLabel,
-        actionDetail,
-      });
+      emittedItem = true;
     }
 
-    if (feed.length >= RECENT_ACTIVITY_FEED_LIMIT * 2) {
-      break;
-    }
-  }
-
-  if (feed.length === 0) {
-    for (const tx of chronological) {
-      const absSol = Math.abs(tx.solChange);
-      const transferUsd = absSol * solPriceUsd;
-      if (absSol < 0.15 && transferUsd < FEED_DUST_NOTIONAL_USD) {
-        continue;
-      }
-
-      const actionLabel =
-        tx.solChange < 0
-          ? `Swapped ${absSol.toFixed(2)} SOL -> token`
-          : `Swapped token -> ${absSol.toFixed(2)} SOL`;
-
+    if (!emittedItem) {
+      const dexInteraction = tx.tokenDeltas.length > 0 ? 'Token balance changed' : 'Wallet interaction detected';
       feed.push({
         type: 'large',
         signature: tx.signature,
@@ -1038,20 +1119,14 @@ async function buildRecentBehaviorFeed(
         mint: WRAPPED_SOL_MINT,
         tokenSymbol: 'SOL',
         tokenName: 'Solana',
-        notionalUsd: transferUsd,
-        actionLabel,
-        actionDetail: 'Limited analysis from recent wallet interactions',
+        notionalUsd: 0,
+        actionLabel: dexInteraction,
+        actionDetail: 'Readable activity detected from transaction history',
       });
-
-      if (feed.length >= RECENT_ACTIVITY_FEED_LIMIT) {
-        break;
-      }
     }
   }
 
-  const mostRecentFirst = [...feed].sort((a, b) => b.timestamp - a.timestamp);
-  const compacted = compactBehaviorFeed(mostRecentFirst);
-  return compacted.slice(0, RECENT_ACTIVITY_FEED_LIMIT);
+  return compactBehaviorFeed([...feed].sort((a, b) => b.timestamp - a.timestamp)).slice(0, RECENT_ACTIVITY_FEED_LIMIT);
 }
 
 async function estimateApproxFirstActivity(
@@ -1141,6 +1216,22 @@ function buildFastAnalyticsSnapshot(
   const activityLevel = classifyActivityLevelFromRecentInteractions(recentInteractions);
   const tradingStyle = inferTradingStyleLight(recentInteractions, holdings.length, concentrationScore);
   const uniqueTokensTraded = holdings.length;
+  const insightPayload = buildWalletInsights({
+    analyzedTransactions: signatures.length,
+    recentWindowTransactions: recentInteractions,
+    activityLevel,
+    tradingFrequency,
+    portfolioConcentrationScore: concentrationScore,
+    totalTokenHoldings: holdings.length,
+    uniqueTokensTraded,
+    lastActiveAt: latestSignature ? signatures[0]?.blockTime ?? null : null,
+    averageEstimatedHoldDurationHours: null,
+    programTagCounts: new Map(),
+    recentTradingActivity:
+      recentInteractions > 0
+        ? `${recentInteractions} wallet interactions in the last 7 days`
+        : 'Not enough recent activity',
+  });
 
   const riskLevel: RiskLevel =
     recentInteractions >= 30 || concentrationScore >= 75
@@ -1163,7 +1254,9 @@ function buildFastAnalyticsSnapshot(
     tradingStyle,
     averageEstimatedHoldDurationHours: null,
     riskLevel,
-    recentActivityFeed: [],
+    walletInsights: insightPayload.walletInsights,
+    activitySummary: insightPayload.activitySummary,
+    behaviorSignals: insightPayload.behaviorSignals,
     recentTrades: fallbackTradesFromSignatures(signatures),
     cachedAt: Date.now(),
   };
@@ -1212,14 +1305,10 @@ export async function GET(
     const { concentrationScore, diversity } = computePortfolioStructure(holdings);
     const latestSignature = analyticsSignatures[0]?.signature ?? null;
     const fastAnalytics = buildFastAnalyticsSnapshot(latestSignature, analyticsSignatures, holdings, concentrationScore);
-    const analytics = await withTimeout(Promise.resolve(fastAnalytics), FAST_ANALYTICS_TIMEOUT_MS, fastAnalytics);
-
-    const activityFeed = await buildRecentBehaviorFeed(
-      conn,
-      address,
-      signatures,
-      holdings,
-      solPriceUsd
+    const analytics = await withTimeout(
+      computeWalletAnalytics(conn, pubkey, address, solPriceUsd, concentrationScore, holdings.length, analyticsSignatures),
+      FAST_ANALYTICS_TIMEOUT_MS,
+      fastAnalytics
     );
 
     const recentTransactions =
@@ -1255,7 +1344,9 @@ export async function GET(
             : concentrationScore >= 45 || analytics.riskLevel === 'Medium'
               ? 'Medium'
               : 'Low',
-      recentActivityFeed: activityFeed,
+      walletInsights: analytics.walletInsights,
+      activitySummary: analytics.activitySummary,
+      behaviorSignals: analytics.behaviorSignals,
       holdings,
       recentTransactions,
     };

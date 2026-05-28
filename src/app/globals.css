@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -11,12 +11,31 @@
 
   html {
     scroll-behavior: smooth;
+    background: #05070d;
   }
 
   body {
     @apply bg-background text-text antialiased;
     font-family: 'Inter', system-ui, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(0, 212, 255, 0.12), transparent 32%),
+      radial-gradient(circle at 85% 15%, rgba(124, 58, 237, 0.16), transparent 28%),
+      radial-gradient(circle at 50% 120%, rgba(0, 255, 163, 0.08), transparent 30%),
+      linear-gradient(180deg, #05070d 0%, #080b14 45%, #05070d 100%);
     overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    background-size: 72px 72px;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 92%);
+    opacity: 0.55;
   }
 
   /* Prevent iOS Safari input auto-zoom that can shift layout off-screen. */
@@ -52,13 +71,72 @@
 }
 
 @layer components {
-  /* Glassmorphism card */
+  .page-shell {
+    @apply relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .orb {
+    @apply pointer-events-none absolute rounded-full blur-3xl;
+  }
+
+  .hero-orb-cyan {
+    background: radial-gradient(circle, rgba(0, 212, 255, 0.18) 0%, transparent 70%);
+  }
+
+  .hero-orb-purple {
+    background: radial-gradient(circle, rgba(124, 58, 237, 0.18) 0%, transparent 70%);
+  }
+
+  .hero-orb-green {
+    background: radial-gradient(circle, rgba(0, 255, 163, 0.12) 0%, transparent 70%);
+  }
+
   .glass-card {
-    @apply bg-surface/80 backdrop-blur-md border border-border rounded-xl shadow-glass;
+    @apply bg-surface/70 backdrop-blur-xl border border-white/10 rounded-2xl shadow-card;
+  }
+
+  .glass-card-strong {
+    @apply bg-surface/85 backdrop-blur-xl border border-white/10 rounded-2xl shadow-glass;
   }
 
   .glass-card-bright {
-    @apply bg-surface-2/90 backdrop-blur-md border border-border-bright rounded-xl shadow-glass;
+    @apply bg-surface-2/85 backdrop-blur-xl border border-white/10 rounded-2xl shadow-glass;
+  }
+
+  .premium-card {
+    @apply glass-card-bright relative overflow-hidden;
+  }
+
+  .premium-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.35), rgba(124, 58, 237, 0.2), rgba(0, 255, 163, 0.25));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
+  .premium-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .section-kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.24em] text-text-3;
+  }
+
+  .section-title {
+    @apply text-2xl font-bold tracking-tight text-text sm:text-3xl;
+    font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  }
+
+  .section-subtitle {
+    @apply max-w-2xl text-sm leading-6 text-text-2 sm:text-base;
   }
 
   /* Neon glow effects */
@@ -83,27 +161,20 @@
 
   /* Button variants */
   .btn-primary {
-    @apply bg-accent text-background font-semibold px-5 py-2.5 rounded-lg
-           hover:bg-accent-dim transition-all duration-200 shadow-glow-sm
-           hover:shadow-glow active:scale-95;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-2.5 font-semibold text-background shadow-glow-sm transition-all duration-200 hover:bg-accent-dim hover:shadow-glow active:scale-[0.98];
   }
 
   .btn-secondary {
-    @apply bg-surface-2 border border-border text-text font-medium px-5 py-2.5 rounded-lg
-           hover:border-accent/50 hover:text-accent transition-all duration-200
-           active:scale-95;
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-surface-2/80 px-5 py-2.5 font-medium text-text transition-all duration-200 hover:border-accent/40 hover:bg-surface-2 hover:text-accent active:scale-[0.98];
   }
 
   .btn-ghost {
-    @apply text-text-2 px-4 py-2 rounded-lg hover:bg-surface-2
-           hover:text-text transition-all duration-200;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-text-2 transition-all duration-200 hover:bg-white/5 hover:text-text;
   }
 
   /* Input */
   .input-primary {
-    @apply bg-surface-2 border border-border text-text placeholder-text-3
-           rounded-lg px-4 py-2.5 focus:outline-none focus:border-accent/60
-           focus:ring-1 focus:ring-accent/30 transition-all duration-200;
+    @apply w-full rounded-full border border-white/10 bg-surface-2/80 px-4 py-3 text-text placeholder-text-3 shadow-inner outline-none transition-all duration-200 focus:border-accent/50 focus:ring-2 focus:ring-accent/15;
   }
 
   /* Badge */
@@ -133,7 +204,44 @@
 
   /* Stat card */
   .stat-card {
-    @apply glass-card p-4 flex flex-col gap-1;
+    @apply premium-card p-4 flex flex-col gap-1;
+  }
+
+  .metric-title {
+    @apply text-xs font-medium uppercase tracking-[0.2em] text-text-3;
+  }
+
+  .metric-value {
+    @apply text-2xl font-bold tracking-tight text-text sm:text-[1.75rem];
+    font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  }
+
+  .metric-detail {
+    @apply text-sm text-text-3;
+  }
+
+  .soft-divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  }
+
+  .panel-grid {
+    @apply grid gap-4;
+  }
+
+  .panel-grid-2 {
+    @apply grid gap-4 lg:grid-cols-2;
+  }
+
+  .panel-grid-3 {
+    @apply grid gap-4 lg:grid-cols-3;
+  }
+
+  .loading-card {
+    @apply overflow-hidden rounded-2xl border border-white/10 bg-surface/70;
+  }
+
+  .loading-line {
+    @apply shimmer rounded-full;
   }
 
   /* Table */

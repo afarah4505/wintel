@@ -3,14 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Bookmark,
-  Menu,
-  Search,
-  Wallet,
-  X,
-} from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Bookmark, Menu, Search, Wallet, X } from 'lucide-react';
 import { WalletSearch } from '@/components/WalletSearch';
 import { cn } from '@/lib/utils';
 
@@ -26,96 +20,91 @@ export function Navbar() {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 h-16 border-b border-border bg-background/90 backdrop-blur-md">
-        <div className="mx-auto max-w-screen-2xl h-full px-4 flex items-center gap-4">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-cyan flex items-center justify-center shadow-glow-sm">
-              <Wallet className="w-4 h-4 text-background" />
+      <header className="fixed left-0 right-0 top-0 z-50 border-b border-white/8 bg-background/70 backdrop-blur-xl">
+        <div className="page-shell flex h-20 items-center gap-4">
+          <Link href="/" className="group flex items-center gap-3 shrink-0">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-glow-sm transition-all duration-200 group-hover:border-accent/30 group-hover:shadow-glow">
+              <Wallet className="h-5 w-5 text-accent" />
             </div>
-            <span className="font-bold text-lg gradient-text hidden sm:block">Wallet Intel</span>
+            <div className="hidden sm:block">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-text-3">Wallet Intel</p>
+              <p className="text-sm font-semibold text-text">Crypto Intelligence Dashboard</p>
+            </div>
           </Link>
 
-          {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-1 ml-4">
+          <nav className="hidden md:flex items-center gap-1 rounded-full border border-white/8 bg-white/[0.03] p-1">
             {NAV_LINKS.map(({ href, label, icon: Icon }) => (
               <Link
                 key={href}
                 href={href}
                 className={cn(
-                  'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200',
+                  'flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all duration-200',
                   pathname === href
-                    ? 'bg-accent/10 text-accent'
-                    : 'text-text-2 hover:text-text hover:bg-surface-2'
+                    ? 'bg-accent/10 text-accent shadow-glow-sm'
+                    : 'text-text-2 hover:bg-white/5 hover:text-text'
                 )}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="h-4 w-4" />
                 {label}
               </Link>
             ))}
           </nav>
 
-          {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Search */}
           <button
             onClick={() => setSearchOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-border rounded-lg text-text-3 text-sm hover:border-accent/40 transition-all duration-200 w-48 md:w-64 lg:w-80"
+            className="flex w-full max-w-[22rem] items-center gap-3 rounded-full border border-white/10 bg-surface/70 px-4 py-3 text-left text-sm text-text-3 transition-all duration-200 hover:border-accent/35 hover:bg-surface sm:max-w-[26rem]"
           >
-            <Search className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:block truncate">Search Solana wallet...</span>
-            <kbd className="ml-auto hidden lg:flex items-center gap-1 text-xs text-text-3 bg-surface border border-border rounded px-1.5 py-0.5">
+            <Search className="h-4 w-4 shrink-0 text-text-2" />
+            <span className="hidden truncate sm:block">Search Solana wallet...</span>
+            <span className="truncate sm:hidden">Search wallet...</span>
+            <kbd className="ml-auto hidden rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-text-3 lg:flex">
               ⌘K
             </kbd>
           </button>
 
-          {/* Mobile menu */}
           <button
-            className="md:hidden btn-ghost p-2"
+            className="md:hidden btn-ghost rounded-full border border-white/10 bg-white/5 p-2.5"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
           >
-            {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </header>
 
-      {/* Mobile nav */}
       <AnimatePresence>
         {mobileOpen && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed top-16 left-0 right-0 z-40 bg-background/95 backdrop-blur-md border-b border-border p-4 flex flex-col gap-2 md:hidden"
+            className="fixed left-0 right-0 top-20 z-40 border-b border-white/8 bg-background/90 px-4 pb-4 pt-2 backdrop-blur-xl md:hidden"
           >
-            {NAV_LINKS.map(({ href, label, icon: Icon }) => (
-              <Link
-                key={href}
-                href={href}
-                onClick={() => setMobileOpen(false)}
-                className={cn(
-                  'flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200',
-                  pathname === href
-                    ? 'bg-accent/10 text-accent border border-accent/20'
-                    : 'text-text-2 hover:text-text hover:bg-surface-2'
-                )}
-              >
-                <Icon className="w-5 h-5" />
-                {label}
-              </Link>
-            ))}
+            <div className="page-shell flex flex-col gap-2">
+              {NAV_LINKS.map(({ href, label, icon: Icon }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium transition-all duration-200',
+                    pathname === href
+                      ? 'border-accent/20 bg-accent/10 text-accent'
+                      : 'border-white/8 bg-white/[0.03] text-text-2 hover:border-white/12 hover:bg-white/[0.05] hover:text-text'
+                  )}
+                >
+                  <Icon className="h-5 w-5" />
+                  {label}
+                </Link>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Global wallet search modal */}
-      <AnimatePresence>
-        {searchOpen && (
-          <WalletSearch onClose={() => setSearchOpen(false)} />
-        )}
-      </AnimatePresence>
+      <AnimatePresence>{searchOpen && <WalletSearch onClose={() => setSearchOpen(false)} />}</AnimatePresence>
     </>
   );
 }

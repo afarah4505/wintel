@@ -1,0 +1,101 @@
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="120" y1="80" x2="1080" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4B1F7A"/>
+      <stop offset="1" stop-color="#2D0E56"/>
+    </linearGradient>
+    <radialGradient id="glowPink" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(880 300) rotate(90) scale(320)">
+      <stop stop-color="#FF75C5" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FF75C5" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowGold" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(290 930) rotate(90) scale(280)">
+      <stop stop-color="#FFC857" stop-opacity="0.48"/>
+      <stop offset="1" stop-color="#FFC857" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="duckBody" x1="500" y1="390" x2="680" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE97B"/>
+      <stop offset="1" stop-color="#F6BC2D"/>
+    </linearGradient>
+    <linearGradient id="duckFace" x1="430" y1="360" x2="720" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF4A9"/>
+      <stop offset="1" stop-color="#FFD659"/>
+    </linearGradient>
+    <linearGradient id="beakGrad" x1="585" y1="555" x2="585" y2="655" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB561"/>
+      <stop offset="1" stop-color="#FF8E43"/>
+    </linearGradient>
+    <linearGradient id="frameGrad" x1="800" y1="120" x2="1080" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD782"/>
+      <stop offset="0.55" stop-color="#FF8FD6"/>
+      <stop offset="1" stop-color="#8D67FF"/>
+    </linearGradient>
+    <filter id="softShadow" x="0" y="0" width="1200" height="1200" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feOffset dy="5"/>
+      <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.28 0"/>
+      <feBlend in="SourceGraphic" mode="normal"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="1200" fill="url(#bgGrad)"/>
+  <circle cx="880" cy="300" r="320" fill="url(#glowPink)"/>
+  <circle cx="290" cy="930" r="280" fill="url(#glowGold)"/>
+
+  <g opacity="0.2">
+    <path d="M80 920C210 830 340 980 500 900C650 830 780 680 960 760C1070 810 1120 900 1170 860" stroke="#FFD0FF" stroke-width="6" stroke-linecap="round"/>
+    <path d="M70 830C210 740 360 870 520 810C680 750 830 620 990 670C1070 700 1130 760 1170 730" stroke="#FFC86E" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <ellipse cx="585" cy="960" rx="250" ry="85" fill="#260C45" opacity="0.5"/>
+
+    <ellipse cx="585" cy="730" rx="240" ry="250" fill="url(#duckBody)"/>
+    <ellipse cx="575" cy="520" rx="195" ry="180" fill="url(#duckFace)"/>
+
+    <ellipse cx="510" cy="500" rx="50" ry="58" fill="#FFFFFF"/>
+    <ellipse cx="645" cy="500" rx="50" ry="58" fill="#FFFFFF"/>
+    <circle cx="515" cy="510" r="25" fill="#1B1130"/>
+    <circle cx="650" cy="510" r="25" fill="#1B1130"/>
+    <circle cx="523" cy="498" r="8" fill="#FFFFFF"/>
+    <circle cx="658" cy="498" r="8" fill="#FFFFFF"/>
+
+    <ellipse cx="480" cy="565" rx="25" ry="15" fill="#FF9FD6" opacity="0.65"/>
+    <ellipse cx="690" cy="565" rx="25" ry="15" fill="#FF9FD6" opacity="0.65"/>
+
+    <path d="M500 640C545 678 620 678 665 640" stroke="#9E5E27" stroke-width="8" stroke-linecap="round"/>
+    <ellipse cx="585" cy="605" rx="86" ry="45" fill="url(#beakGrad)"/>
+    <path d="M520 606H650" stroke="#CF6C2B" stroke-width="6" stroke-linecap="round"/>
+
+    <ellipse cx="388" cy="720" rx="64" ry="88" transform="rotate(-24 388 720)" fill="#FFD95E"/>
+    <ellipse cx="778" cy="720" rx="64" ry="88" transform="rotate(24 778 720)" fill="#FFD95E"/>
+
+    <g>
+      <path d="M500 760C490 700 490 650 505 620" stroke="#67B953" stroke-width="9" stroke-linecap="round"/>
+      <path d="M535 782C530 720 532 665 550 632" stroke="#78C75F" stroke-width="9" stroke-linecap="round"/>
+      <path d="M568 794C562 730 565 670 585 632" stroke="#65B84F" stroke-width="9" stroke-linecap="round"/>
+      <path d="M602 796C600 730 606 676 628 635" stroke="#6FC257" stroke-width="9" stroke-linecap="round"/>
+      <path d="M636 784C640 724 652 674 675 641" stroke="#7ACA66" stroke-width="9" stroke-linecap="round"/>
+
+      <circle cx="502" cy="602" r="34" fill="#FF87CC"/>
+      <circle cx="548" cy="618" r="30" fill="#FFC56B"/>
+      <circle cx="588" cy="610" r="33" fill="#FF93D2"/>
+      <circle cx="629" cy="622" r="31" fill="#FFB95A"/>
+      <circle cx="673" cy="614" r="34" fill="#FF7FC5"/>
+
+      <circle cx="494" cy="594" r="11" fill="#FFF2F8"/>
+      <circle cx="579" cy="602" r="10" fill="#FFF2F8"/>
+      <circle cx="665" cy="604" r="10" fill="#FFF2F8"/>
+    </g>
+
+    <rect x="760" y="120" width="320" height="280" rx="28" fill="#2A114A" stroke="url(#frameGrad)" stroke-width="12"/>
+    <rect x="784" y="148" width="272" height="224" rx="18" fill="#3A1768"/>
+    <text x="920" y="275" text-anchor="middle" fill="#FFE68E" font-size="78" font-weight="800" font-family="Poppins, Avenir Next, Segoe UI, Arial, sans-serif">$SUTYA</text>
+    <text x="920" y="327" text-anchor="middle" fill="#FFB0DA" font-size="28" font-weight="600" font-family="Poppins, Avenir Next, Segoe UI, Arial, sans-serif">Meme Duck Energy</text>
+
+    <circle cx="860" cy="85" r="10" fill="#FFD46E"/>
+    <circle cx="690" cy="190" r="7" fill="#FF9AD2"/>
+    <circle cx="1028" cy="466" r="8" fill="#FFD46E"/>
+    <circle cx="340" cy="250" r="8" fill="#FF9AD2"/>
+  </g>
+</svg>

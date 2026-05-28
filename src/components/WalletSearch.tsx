@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Search, X, Clock, ArrowRight, TrendingUp } from 'lucide-react';
+import { ArrowRight, Clock, Search, Sparkles, X, TrendingUp } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { isValidSolanaAddress, shortenAddress } from '@/lib/utils';
 
@@ -46,89 +46,89 @@ export function WalletSearch({ onClose }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-background/80 backdrop-blur-md"
         onClick={onClose}
       />
 
-      {/* Modal */}
       <motion.div
         initial={{ opacity: 0, scale: 0.97, y: -20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97, y: -20 }}
         transition={{ type: 'spring', damping: 25, stiffness: 400 }}
-        className="fixed top-24 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl px-4"
+        className="fixed left-1/2 top-24 z-50 w-full max-w-2xl -translate-x-1/2 px-4"
       >
-        <div className="glass-card-bright overflow-hidden">
-          {/* Search input */}
-          <form onSubmit={onSubmit} className="flex items-center gap-3 p-4 border-b border-border">
-            <Search className="w-5 h-5 text-text-3 shrink-0" />
+        <div className="premium-card overflow-hidden rounded-[1.75rem]">
+          <div className="border-b border-white/8 bg-white/[0.03] px-5 py-4">
+            <p className="section-kicker flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-accent" />
+              Quick wallet search
+            </p>
+            <p className="mt-2 text-sm text-text-2">Paste an address to jump directly into wallet intelligence.</p>
+          </div>
+
+          <form onSubmit={onSubmit} className="flex items-center gap-3 border-b border-white/8 px-5 py-4">
+            <Search className="h-5 w-5 shrink-0 text-text-3" />
             <input
               ref={inputRef}
               value={query}
-              onChange={(e) => { setQuery(e.target.value); setError(''); }}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setError('');
+              }}
               placeholder="Paste a Solana wallet address..."
-              className="flex-1 bg-transparent text-text placeholder-text-3 outline-none text-base font-mono"
+              className="flex-1 border-0 bg-transparent text-base font-mono text-text outline-none placeholder:text-text-3"
               spellCheck={false}
               autoComplete="off"
             />
             {query && (
-              <button type="button" onClick={() => setQuery('')} className="text-text-3 hover:text-text">
-                <X className="w-4 h-4" />
+              <button type="button" onClick={() => setQuery('')} className="rounded-full p-2 text-text-3 transition-colors hover:bg-white/5 hover:text-text">
+                <X className="h-4 w-4" />
               </button>
             )}
-            <button type="submit" className="btn-primary py-1.5 px-3 text-sm">
+            <button type="submit" className="btn-primary px-4 py-2.5 text-sm">
               Track
+              <ArrowRight className="h-4 w-4" />
             </button>
           </form>
 
-          {error && (
-            <p className="text-red text-sm px-4 py-2 bg-red/5">{error}</p>
-          )}
+          {error && <p className="border-b border-white/8 bg-red/5 px-5 py-3 text-sm text-red">{error}</p>}
 
-          {/* Recent searches */}
-          {recentSearches.length > 0 && (
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-medium text-text-3 uppercase tracking-wide flex items-center gap-1.5">
-                  <Clock className="w-3 h-3" /> Recent
+          {recentSearches.length > 0 ? (
+            <div className="px-5 py-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="section-kicker flex items-center gap-2">
+                  <Clock className="h-3.5 w-3.5" />
+                  Recent searches
                 </span>
-                <button
-                  onClick={clearRecentSearches}
-                  className="text-xs text-text-3 hover:text-text transition-colors"
-                >
+                <button onClick={clearRecentSearches} className="text-xs text-text-3 transition-colors hover:text-text">
                   Clear all
                 </button>
               </div>
-              <div className="flex flex-col gap-1">
+              <div className="grid gap-2">
                 {recentSearches.slice(0, 5).map((addr) => (
                   <button
                     key={addr}
                     onClick={() => handleSearch(addr)}
-                    className="flex items-center justify-between w-full px-3 py-2.5 rounded-lg hover:bg-surface-3 transition-colors group text-left"
+                    className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-left transition-all duration-200 hover:border-accent/25 hover:bg-white/[0.05]"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
-                        <TrendingUp className="w-3 h-3 text-accent" />
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent">
+                        <TrendingUp className="h-3.5 w-3.5" />
                       </div>
-                      <span className="font-mono text-sm text-text-2 group-hover:text-text">
-                        {shortenAddress(addr, 6)}
-                      </span>
+                      <span className="font-mono text-sm text-text-2">{shortenAddress(addr, 6)}</span>
                     </div>
-                    <ArrowRight className="w-4 h-4 text-text-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <ArrowRight className="h-4 w-4 text-text-3" />
                   </button>
                 ))}
               </div>
             </div>
-          )}
-
-          {recentSearches.length === 0 && (
-            <div className="p-6 text-center text-text-3 text-sm">
-              <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          ) : (
+            <div className="px-5 py-8 text-center text-sm text-text-3">
+              <Search className="mx-auto mb-3 h-8 w-8 opacity-30" />
               <p>Paste any Solana wallet address to start tracking</p>
             </div>
           )}

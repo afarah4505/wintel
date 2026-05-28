@@ -24,6 +24,16 @@ export type ActivityLevel = 'Low' | 'Medium' | 'High' | 'Very High';
 export type TradingStyle = 'Long-term holder' | 'Swing trader' | 'Meme coin scalper' | 'High-frequency trader';
 export type RiskLevel = 'Low' | 'Medium' | 'High';
 
+export interface WalletInsight {
+  label: string;
+  detail: string;
+}
+
+export interface WalletBehaviorSignal {
+  label: string;
+  value: string;
+}
+
 export interface WalletActivityFeedItem {
   type: 'buy' | 'sell' | 'large' | 'new-token';
   signature: string;
@@ -56,7 +66,9 @@ export interface WalletAnalysis {
   tradingStyle: TradingStyle;
   averageEstimatedHoldDurationHours: number | null;
   riskLevel: RiskLevel;
-  recentActivityFeed: WalletActivityFeedItem[];
+  walletInsights: WalletInsight[];
+  activitySummary: string;
+  behaviorSignals: WalletBehaviorSignal[];
   holdings: TokenHolding[];
   recentTransactions: Trade[];
 }
