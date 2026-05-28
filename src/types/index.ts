@@ -26,8 +26,6 @@ export interface WalletAnalysis {
   walletAgeDays: number | null;
   firstTransactionAt: number | null;
   lastTransactionAt: number | null;
-  ageScanComplete: boolean;
-  ageScannedSignatures: number;
   ageScanInProgress: boolean;
   portfolioValueUsd: number;
   estimatedPnlUsd: number;

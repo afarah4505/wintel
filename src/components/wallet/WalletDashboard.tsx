@@ -53,6 +53,7 @@ export function WalletDashboard({ address }: Props) {
       return payload.data;
     },
     enabled: isValid,
+    refetchInterval: (query) => (query.state.data?.ageScanInProgress ? 3000 : false),
   });
 
   if (!isValid) {
@@ -76,10 +77,9 @@ export function WalletDashboard({ address }: Props) {
   }
 
   const watchlisted = isWatchlisted(address);
-  const ageIsPartial = Boolean(data && !data.ageScanComplete);
   const walletAgeLabel =
     data?.walletAgeDays == null
-      ? 'No tx history'
+      ? 'No detected activity'
       : data.walletAgeDays < 1
         ? '<1 day'
         : data.walletAgeDays >= 365
@@ -157,16 +157,13 @@ export function WalletDashboard({ address }: Props) {
           <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : formatUsd(data?.portfolioValueUsd || 0)}</p>
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-text-3">Wallet Age</p>
-          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : `${walletAgeLabel}${ageIsPartial ? ' (est.)' : ''}`}</p>
+          <p className="text-xs text-text-3">Estimated Wallet Age</p>
+          <p className="mt-1 text-lg font-semibold">{isLoading ? '...' : walletAgeLabel}</p>
           {!isLoading && data?.firstTransactionAt && (
-            <p className="mt-0.5 text-xs text-text-3">Since {formatDate(data.firstTransactionAt)}</p>
-          )}
-          {!isLoading && ageIsPartial && (
-            <p className="mt-0.5 text-xs text-amber-300">Scanned {data?.ageScannedSignatures ?? 0} signatures (history may be deeper).</p>
+            <p className="mt-0.5 text-xs text-text-3">Approximate First Activity: {formatDate(data.firstTransactionAt)}</p>
           )}
           {!isLoading && data?.ageScanInProgress && (
-            <p className="mt-0.5 text-xs text-text-3">Background scan in progress...</p>
+            <p className="mt-0.5 text-xs text-amber-300">Scanning wallet history...</p>
           )}
         </article>
         <article className="rounded-xl border border-border bg-surface p-4">

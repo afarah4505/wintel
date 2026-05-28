@@ -215,3 +215,19 @@ CREATE TRIGGER trg_users_updated_at       BEFORE UPDATE ON users       FOR EACH 
 CREATE TRIGGER trg_wallets_updated_at     BEFORE UPDATE ON wallets     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_tokens_updated_at      BEFORE UPDATE ON tokens      FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_holdings_updated_at    BEFORE UPDATE ON token_holdings FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ─── Wallet Age Cache ────────────────────────────────────────────────────────
+CREATE TABLE wallet_age_cache (
+    wallet_address          TEXT PRIMARY KEY,
+    oldest_signature        TEXT,
+    oldest_block_time       BIGINT,
+    estimated_wallet_age_days NUMERIC(12, 4),
+    scan_before_signature   TEXT,
+    scan_complete           BOOLEAN NOT NULL DEFAULT FALSE,
+    is_scanning             BOOLEAN NOT NULL DEFAULT FALSE,
+    scanned_pages           INTEGER NOT NULL DEFAULT 0,
+    scanned_signatures      INTEGER NOT NULL DEFAULT 0,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_wallet_age_cache_updated ON wallet_age_cache (updated_at DESC);

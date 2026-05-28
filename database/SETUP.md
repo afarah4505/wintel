@@ -1,6 +1,6 @@
 # Database Setup (Supabase Free Tier)
 
-This app needs one lightweight table for tracked wallets sync. You can still run without Supabase; in that case watchlist data remains local in browser storage.
+This app needs lightweight tables for watchlist sync and progressive wallet-age cache. You can still run without Supabase; in that case watchlist data remains local in browser storage and wallet age cache stays request-local only.
 
 ## 1) Create a free Supabase project
 
@@ -20,6 +20,22 @@ create table if not exists tracked_wallets (
 
 create index if not exists idx_tracked_wallets_client
 	on tracked_wallets (client_id, added_at desc);
+
+create table if not exists wallet_age_cache (
+	wallet_address text primary key,
+	oldest_signature text,
+	oldest_block_time bigint,
+	estimated_wallet_age_days numeric(12, 4),
+	scan_before_signature text,
+	scan_complete boolean not null default false,
+	is_scanning boolean not null default false,
+	scanned_pages integer not null default 0,
+	scanned_signatures integer not null default 0,
+	updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_wallet_age_cache_updated
+	on wallet_age_cache (updated_at desc);
 ```
 
 ## 2) Environment variables

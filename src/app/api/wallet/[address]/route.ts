@@ -2,40 +2,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSolanaConnection, getSolBalance, getTokenBalances } from '@/lib/helius';
 import { PublicKey } from '@solana/web3.js';
 import { getTokenPairs } from '@/lib/dexscreener';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { isValidSolanaAddress } from '@/lib/utils';
 import type { TokenHolding, Trade, WalletAnalysis } from '@/types';
 
 const MAX_TX_COUNT = 10;
-const SIGNATURE_FETCH_COUNT = 25;
+const SIGNATURE_FETCH_COUNT = 1000;
 const TX_METRIC_FETCH_COUNT = 20;
-const AGE_SCAN_PAGE_SIZE = 1000; // maximum allowed by Solana RPC
-const AGE_SCAN_MAX_PAGES = 60; // up to 60,000 signatures scanned for wallet age
-const AGE_SCAN_TIME_BUDGET_MS = 10000;
-const AGE_BACKGROUND_TIME_BUDGET_MS = 30000;
-const AGE_BACKGROUND_MAX_PAGES = 200;
-const AGE_CACHE_FRESH_MS = 60000;
+const AGE_SCAN_MAX_PAGES = 100;
+const AGE_SCAN_PAGES_PER_RUN = 4;
 const MAX_HOLDINGS = 10;
 const MIN_WIN_RATE_SAMPLE = 3;
 const MIN_HOLDING_PRICE_CHANGE = 0.2;
 const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+const WALLET_AGE_CACHE_TABLE = 'wallet_age_cache';
 
 const metadataCache = new Map<string, Promise<{ name: string; symbol: string } | null>>();
+const activeAgeScans = new Set<string>();
+let walletAgeCacheTableReady: boolean | null = null;
 
-type AgeScanSnapshot = {
-  first: number | null;
-  last: number | null;
+type WalletAgeCache = {
+  walletAddress: string;
+  oldestSignature: string | null;
+  oldestBlockTime: number | null;
+  estimatedWalletAgeDays: number | null;
+  scanBeforeSignature: string | null;
   scanComplete: boolean;
+  isScanning: boolean;
+  scannedPages: number;
   scannedSignatures: number;
-  beforeCursor?: string;
+  updatedAt: string | null;
 };
-
-type AgeScanCacheEntry = AgeScanSnapshot & {
-  running: boolean;
-  updatedAt: number;
-};
-
-const ageScanCache = new Map<string, AgeScanCacheEntry>();
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +45,186 @@ async function withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promis
   } catch {
     return fallback;
   }
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeWalletAgeCache(row: Record<string, unknown>): WalletAgeCache {
+  return {
+    walletAddress: String(row.wallet_address ?? ''),
+    oldestSignature: row.oldest_signature ? String(row.oldest_signature) : null,
+    oldestBlockTime: parseNumber(row.oldest_block_time),
+    estimatedWalletAgeDays: parseNumber(row.estimated_wallet_age_days),
+    scanBeforeSignature: row.scan_before_signature ? String(row.scan_before_signature) : null,
+    scanComplete: Boolean(row.scan_complete),
+    isScanning: Boolean(row.is_scanning),
+    scannedPages: parseNumber(row.scanned_pages) ?? 0,
+    scannedSignatures: parseNumber(row.scanned_signatures) ?? 0,
+    updatedAt: row.updated_at ? String(row.updated_at) : null,
+  };
+}
+
+async function loadWalletAgeCache(address: string): Promise<WalletAgeCache | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from(WALLET_AGE_CACHE_TABLE)
+    .select('*')
+    .eq('wallet_address', address)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return normalizeWalletAgeCache(data as Record<string, unknown>);
+}
+
+async function canUseWalletAgeCache(): Promise<boolean> {
+  if (walletAgeCacheTableReady != null) return walletAgeCacheTableReady;
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    walletAgeCacheTableReady = false;
+    return false;
+  }
+
+  const { error } = await supabase
+    .from(WALLET_AGE_CACHE_TABLE)
+    .select('wallet_address')
+    .limit(1);
+
+  walletAgeCacheTableReady = !error;
+  return walletAgeCacheTableReady;
+}
+
+async function upsertWalletAgeCache(
+  address: string,
+  patch: Partial<WalletAgeCache> & { oldestBlockTime?: number | null; oldestSignature?: string | null }
+): Promise<boolean> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return false;
+
+  const estimatedWalletAgeDays =
+    patch.oldestBlockTime == null ? null : (Date.now() - patch.oldestBlockTime * 1000) / (1000 * 60 * 60 * 24);
+
+  const { error } = await supabase.from(WALLET_AGE_CACHE_TABLE).upsert(
+    {
+      wallet_address: address,
+      oldest_signature: patch.oldestSignature ?? null,
+      oldest_block_time: patch.oldestBlockTime ?? null,
+      estimated_wallet_age_days: patch.estimatedWalletAgeDays ?? estimatedWalletAgeDays,
+      scan_before_signature: patch.scanBeforeSignature ?? null,
+      scan_complete: patch.scanComplete ?? false,
+      is_scanning: patch.isScanning ?? false,
+      scanned_pages: patch.scannedPages ?? 0,
+      scanned_signatures: patch.scannedSignatures ?? 0,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'wallet_address' }
+  );
+
+  if (error) {
+    walletAgeCacheTableReady = false;
+    return false;
+  }
+
+  return true;
+}
+
+async function runBackgroundWalletAgeScan(
+  address: string,
+  conn: ReturnType<typeof getSolanaConnection>,
+  pubkey: PublicKey,
+  seed: {
+    oldestSignature: string | null;
+    oldestBlockTime: number | null;
+    scanBeforeSignature: string | null;
+    scannedPages: number;
+    scannedSignatures: number;
+    scanComplete: boolean;
+  }
+) {
+  if (seed.scanComplete || !seed.scanBeforeSignature || activeAgeScans.has(address)) return;
+
+  activeAgeScans.add(address);
+  const started = await upsertWalletAgeCache(address, {
+    oldestSignature: seed.oldestSignature,
+    oldestBlockTime: seed.oldestBlockTime,
+    scanBeforeSignature: seed.scanBeforeSignature,
+    scanComplete: seed.scanComplete,
+    isScanning: true,
+    scannedPages: seed.scannedPages,
+    scannedSignatures: seed.scannedSignatures,
+  });
+  if (!started) {
+    activeAgeScans.delete(address);
+    return;
+  }
+
+  void (async () => {
+    let oldestSignature = seed.oldestSignature;
+    let oldestBlockTime = seed.oldestBlockTime;
+    let before = seed.scanBeforeSignature;
+    let scannedPages = seed.scannedPages;
+    let scannedSignatures = seed.scannedSignatures;
+    let scanComplete = seed.scanComplete;
+
+    try {
+      for (let i = 0; i < AGE_SCAN_PAGES_PER_RUN && before && !scanComplete; i += 1) {
+        if (scannedPages >= AGE_SCAN_MAX_PAGES) {
+          scanComplete = true;
+          break;
+        }
+
+        const olderSigs = await withTimeout(
+          rpcWithRetry(() => conn.getSignaturesForAddress(pubkey, { limit: SIGNATURE_FETCH_COUNT, before }), 1),
+          4500,
+          [] as Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
+        );
+
+        if (olderSigs.length === 0) {
+          scanComplete = true;
+          before = null;
+          break;
+        }
+
+        scannedPages += 1;
+        scannedSignatures += olderSigs.length;
+
+        const oldestInPage = olderSigs[olderSigs.length - 1];
+        if (oldestInPage) {
+          oldestSignature = oldestInPage.signature;
+          oldestBlockTime = oldestInPage.blockTime ?? oldestBlockTime;
+          before = oldestInPage.signature;
+        }
+
+        if (olderSigs.length < SIGNATURE_FETCH_COUNT) {
+          scanComplete = true;
+          before = null;
+          break;
+        }
+      }
+    } catch {
+      // Keep current best snapshot and stop this run gracefully.
+    } finally {
+      await upsertWalletAgeCache(address, {
+        oldestSignature,
+        oldestBlockTime,
+        scanBeforeSignature: before,
+        scanComplete,
+        isScanning: false,
+        scannedPages,
+        scannedSignatures,
+      });
+      activeAgeScans.delete(address);
+    }
+  })();
 }
 
 async function rpcWithRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
@@ -318,166 +496,18 @@ async function fetchParsedTransactionsFallback(
   return parsed;
 }
 
-async function estimateWalletAge(
-  conn: ReturnType<typeof getSolanaConnection>,
-  pubkey: PublicKey,
-  latestSignatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
-): Promise<AgeScanSnapshot> {
-  try {
-    if (latestSignatures.length === 0) {
-      return { first: null, last: null, scanComplete: true, scannedSignatures: 0 };
-    }
-
-    const latest = latestSignatures[0]?.blockTime ?? null;
-    let scannedSignatures = latestSignatures.length;
-
-    // If initial batch is partial we already have all history
-    if (latestSignatures.length < SIGNATURE_FETCH_COUNT) {
-      return {
-        first: latestSignatures[latestSignatures.length - 1]?.blockTime ?? null,
-        last: latest,
-        scanComplete: true,
-        scannedSignatures,
-        beforeCursor: undefined,
-      };
-    }
-
-    // Paginate backwards from the oldest signature we have, 1000 at a time
-    let earliest: number | null = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
-    let before: string | undefined = latestSignatures[latestSignatures.length - 1]?.signature;
-    const deadline = Date.now() + AGE_SCAN_TIME_BUDGET_MS;
-    let scanComplete = false;
-
-    for (let page = 0; page < AGE_SCAN_MAX_PAGES && before; page += 1) {
-      if (Date.now() >= deadline) {
-        break;
-      }
-
-      const olderSigs = await rpcWithRetry(
-        () => conn.getSignaturesForAddress(pubkey, { limit: AGE_SCAN_PAGE_SIZE, before }),
-        1
-      );
-
-      if (olderSigs.length === 0) {
-        scanComplete = true;
-        break;
-      }
-
-      scannedSignatures += olderSigs.length;
-
-      const oldestInPage = olderSigs[olderSigs.length - 1];
-      earliest = oldestInPage.blockTime ?? earliest;
-      before = oldestInPage.signature;
-
-      // Partial page means we have reached the beginning of tx history
-      if (olderSigs.length < AGE_SCAN_PAGE_SIZE) {
-        scanComplete = true;
-        break;
-      }
-    }
-
-    return { first: earliest, last: latest, scanComplete, scannedSignatures, beforeCursor: scanComplete ? undefined : before };
-  } catch {
-    const fallbackFirst = latestSignatures[latestSignatures.length - 1]?.blockTime ?? null;
-    const fallbackLast = latestSignatures[0]?.blockTime ?? null;
-    return {
-      first: fallbackFirst,
-      last: fallbackLast,
-      scanComplete: false,
-      scannedSignatures: latestSignatures.length,
-      beforeCursor: latestSignatures[latestSignatures.length - 1]?.signature,
-    };
+async function estimateApproxFirstActivity(
+  signatures: Awaited<ReturnType<ReturnType<typeof getSolanaConnection>['getSignaturesForAddress']>>
+): Promise<{ first: number | null; last: number | null }> {
+  if (signatures.length === 0) {
+    return { first: null, last: null };
   }
-}
-
-function mergeAgeScanSnapshots(current: AgeScanSnapshot, cached?: AgeScanCacheEntry): AgeScanSnapshot {
-  if (!cached) return current;
-
-  const first =
-    current.first == null
-      ? cached.first
-      : cached.first == null
-        ? current.first
-        : Math.min(current.first, cached.first);
 
   return {
-    first,
-    last: current.last ?? cached.last,
-    scanComplete: current.scanComplete || cached.scanComplete,
-    scannedSignatures: Math.max(current.scannedSignatures, cached.scannedSignatures),
-    beforeCursor: current.scanComplete
-      ? undefined
-      : (current.beforeCursor ?? cached.beforeCursor),
+    // Approximate first activity from oldest tx in a single limited batch.
+    first: signatures[signatures.length - 1]?.blockTime ?? null,
+    last: signatures[0]?.blockTime ?? null,
   };
-}
-
-function startBackgroundAgeScan(
-  address: string,
-  conn: ReturnType<typeof getSolanaConnection>,
-  pubkey: PublicKey,
-  snapshot: AgeScanSnapshot
-) {
-  const existing = ageScanCache.get(address);
-  if (!snapshot.beforeCursor || snapshot.scanComplete || existing?.running) {
-    return;
-  }
-
-  ageScanCache.set(address, {
-    ...snapshot,
-    running: true,
-    updatedAt: Date.now(),
-  });
-
-  void (async () => {
-    let first = snapshot.first;
-    const last = snapshot.last;
-    let scannedSignatures = snapshot.scannedSignatures;
-    let before = snapshot.beforeCursor;
-    let scanComplete = snapshot.scanComplete;
-    const deadline = Date.now() + AGE_BACKGROUND_TIME_BUDGET_MS;
-
-    try {
-      for (let page = 0; page < AGE_BACKGROUND_MAX_PAGES && before; page += 1) {
-        if (Date.now() >= deadline) break;
-
-        const olderSigs = await rpcWithRetry(
-          () => conn.getSignaturesForAddress(pubkey, { limit: AGE_SCAN_PAGE_SIZE, before }),
-          1
-        );
-
-        if (olderSigs.length === 0) {
-          scanComplete = true;
-          before = undefined;
-          break;
-        }
-
-        scannedSignatures += olderSigs.length;
-        const oldestInPage = olderSigs[olderSigs.length - 1];
-        if (oldestInPage.blockTime != null) {
-          first = first == null ? oldestInPage.blockTime : Math.min(first, oldestInPage.blockTime);
-        }
-        before = oldestInPage.signature;
-
-        if (olderSigs.length < AGE_SCAN_PAGE_SIZE) {
-          scanComplete = true;
-          before = undefined;
-          break;
-        }
-      }
-    } catch {
-      // Keep best-effort snapshot in cache; API requests will continue refinement.
-    } finally {
-      ageScanCache.set(address, {
-        first,
-        last,
-        scanComplete,
-        scannedSignatures,
-        beforeCursor: scanComplete ? undefined : before,
-        running: false,
-        updatedAt: Date.now(),
-      });
-    }
-  })();
 }
 
 export async function GET(
@@ -493,6 +523,7 @@ export async function GET(
   try {
     const conn = getSolanaConnection();
     const pubkey = new PublicKey(address);
+    const cacheBackendAvailable = await canUseWalletAgeCache();
 
     const [solBalanceResult, holdingsResult, signaturesResult, solPriceResult] = await Promise.allSettled([
       withTimeout(getSolBalance(address), 5000, 0),
@@ -505,37 +536,44 @@ export async function GET(
     const holdings = holdingsResult.status === 'fulfilled' ? holdingsResult.value : [];
     const solPriceUsd = solPriceResult.status === 'fulfilled' ? solPriceResult.value : 0;
 
-    const cachedAge = ageScanCache.get(address);
     const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
-    const canReuseRunningCache = Boolean(
-      cachedAge?.running && Date.now() - cachedAge.updatedAt < AGE_CACHE_FRESH_MS
-    );
-    const txWindowInitial = canReuseRunningCache
-      ? {
-          first: cachedAge?.first ?? signatures[signatures.length - 1]?.blockTime ?? null,
-          last: signatures[0]?.blockTime ?? cachedAge?.last ?? null,
-          scanComplete: cachedAge?.scanComplete ?? false,
-          scannedSignatures: cachedAge?.scannedSignatures ?? signatures.length,
-          beforeCursor: cachedAge?.beforeCursor,
-        }
-      : await withTimeout(
-          estimateWalletAge(conn, pubkey, signatures),
-          12000,
-          {
-            first: signatures[signatures.length - 1]?.blockTime ?? null,
-            last: signatures[0]?.blockTime ?? null,
-            scanComplete: false,
-            scannedSignatures: signatures.length,
-            beforeCursor: signatures[signatures.length - 1]?.signature,
-          }
-        );
-    const txWindow = mergeAgeScanSnapshots(txWindowInitial, cachedAge);
-    ageScanCache.set(address, {
-      ...txWindow,
-      running: cachedAge?.running ?? false,
-      updatedAt: Date.now(),
-    });
-    startBackgroundAgeScan(address, conn, pubkey, txWindow);
+    const approxWindow = await estimateApproxFirstActivity(signatures);
+    const cache = await loadWalletAgeCache(address);
+
+    const cachedFirst = cache?.oldestBlockTime ?? null;
+    const txWindowFirst =
+      approxWindow.first == null
+        ? cachedFirst
+        : cachedFirst == null
+          ? approxWindow.first
+          : Math.min(approxWindow.first, cachedFirst);
+
+    const shouldDeepScan = cacheBackendAvailable && signatures.length === SIGNATURE_FETCH_COUNT;
+    const scanComplete = cache?.scanComplete ?? !shouldDeepScan;
+    const scanInProgress = cacheBackendAvailable && ((cache?.isScanning ?? false) || (shouldDeepScan && !scanComplete));
+
+    if (cacheBackendAvailable && !cache) {
+      await upsertWalletAgeCache(address, {
+        oldestSignature: signatures[signatures.length - 1]?.signature ?? null,
+        oldestBlockTime: approxWindow.first,
+        scanBeforeSignature: signatures[signatures.length - 1]?.signature ?? null,
+        scanComplete: !shouldDeepScan,
+        isScanning: false,
+        scannedPages: shouldDeepScan ? 1 : 0,
+        scannedSignatures: signatures.length,
+      });
+    }
+
+    if (cacheBackendAvailable && shouldDeepScan && !scanComplete) {
+      await runBackgroundWalletAgeScan(address, conn, pubkey, {
+        oldestSignature: cache?.oldestSignature ?? signatures[signatures.length - 1]?.signature ?? null,
+        oldestBlockTime: txWindowFirst,
+        scanBeforeSignature: cache?.scanBeforeSignature ?? signatures[signatures.length - 1]?.signature ?? null,
+        scannedPages: Math.max(cache?.scannedPages ?? 0, 1),
+        scannedSignatures: Math.max(cache?.scannedSignatures ?? 0, signatures.length),
+        scanComplete,
+      });
+    }
 
 
     let parsedTransactions: Awaited<ReturnType<typeof conn.getParsedTransactions>> = [];
@@ -594,8 +632,8 @@ export async function GET(
       .filter((h) => h.estimatedPnl24h < 0)
       .slice(0, 5);
 
-    const walletAgeDays = txWindow.first
-      ? (Date.now() - txWindow.first * 1000) / (1000 * 60 * 60 * 24)
+    const walletAgeDays = txWindowFirst
+      ? (Date.now() - txWindowFirst * 1000) / (1000 * 60 * 60 * 24)
       : null;
 
     const recentTransactions =
@@ -605,11 +643,9 @@ export async function GET(
       address,
       solBalance,
       walletAgeDays,
-      firstTransactionAt: txWindow.first,
-      lastTransactionAt: txWindow.last,
-      ageScanComplete: txWindow.scanComplete,
-      ageScannedSignatures: txWindow.scannedSignatures,
-      ageScanInProgress: !txWindow.scanComplete && Boolean(ageScanCache.get(address)?.running),
+      firstTransactionAt: txWindowFirst,
+      lastTransactionAt: approxWindow.last,
+      ageScanInProgress: scanInProgress,
       portfolioValueUsd,
       estimatedPnlUsd,
       estimatedWinRate,
