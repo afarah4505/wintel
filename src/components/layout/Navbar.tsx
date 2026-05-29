@@ -1,10 +1,11 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bookmark, Menu, Search, Wallet, X } from 'lucide-react';
+import { Bookmark, Menu, Search, X } from 'lucide-react';
 import { WalletSearch } from '@/components/WalletSearch';
 import { cn } from '@/lib/utils';
 
@@ -24,7 +25,14 @@ export function Navbar() {
         <div className="page-shell flex h-20 items-center gap-4">
           <Link href="/" className="group flex items-center gap-3 shrink-0">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-glow-sm transition-all duration-200 group-hover:border-accent/30 group-hover:shadow-glow">
-              <Wallet className="h-5 w-5 text-accent" />
+              <Image
+                src="/branding/x-logo.svg"
+                alt="Wallet Intel logo"
+                width={28}
+                height={28}
+                className="h-7 w-7 rounded-lg"
+                priority
+              />
             </div>
             <div className="hidden sm:block">
               <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-text-3">Wallet Intel</p>

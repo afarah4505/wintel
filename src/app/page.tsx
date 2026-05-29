@@ -1,8 +1,9 @@
 'use client';
 
+import Image from 'next/image';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Search, ShieldCheck, Sparkles, Wallet } from 'lucide-react';
+import { ArrowRight, Search, ShieldCheck, Sparkles } from 'lucide-react';
 import { isValidSolanaAddress } from '@/lib/utils';
 import { useAppStore } from '@/store/appStore';
 
@@ -45,7 +46,14 @@ export default function HomePage() {
 
           <div className="relative z-10 mx-auto max-w-4xl text-center">
             <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-glow-sm">
-              <Wallet className="h-8 w-8 text-accent" />
+              <Image
+                src="/branding/x-logo.svg"
+                alt="Wallet Intel logo"
+                width={40}
+                height={40}
+                className="h-10 w-10 rounded-xl"
+                priority
+              />
             </div>
 
             <p className="section-kicker">AI-powered wallet intelligence</p>

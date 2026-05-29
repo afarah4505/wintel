@@ -5,15 +5,30 @@ import { Providers } from '@/components/Providers';
 import { Navbar } from '@/components/layout/Navbar';
 import { Toaster } from 'react-hot-toast';
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.URL || 'http://localhost:3000';
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: 'Wallet Intel — Crypto Intelligence Dashboard',
   description:
     'A premium Solana wallet intelligence dashboard with behavioral insights, portfolio context, and lightweight analytics.',
   keywords: ['solana', 'wallet analyzer', 'wallet intelligence', 'wallet tracking', 'crypto'],
+  icons: {
+    icon: '/branding/x-logo.svg',
+    shortcut: '/branding/x-logo.svg',
+    apple: '/branding/x-logo.svg',
+  },
   openGraph: {
     title: 'Wallet Intel — Crypto Intelligence Dashboard',
     description: 'Analyze Solana wallets with a sleek premium intelligence dashboard.',
     type: 'website',
+    images: ['/branding/x-banner.svg'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Wallet Intel — Crypto Intelligence Dashboard',
+    description: 'Analyze Solana wallets with a sleek premium intelligence dashboard.',
+    images: ['/branding/x-banner.svg'],
   },
 };
 
